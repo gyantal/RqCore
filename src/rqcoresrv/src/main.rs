@@ -1,71 +1,14 @@
-use actix_web::{App, HttpServer, Result};
+use actix_web::{web, App, HttpServer};
 use actix_web::rt::System;
-use actix_web::{dev::{ServiceRequest, ServiceResponse, Transform}, Error};
 use actix_files::Files;
-use std::task::{Context, Poll};
-use std::future::{ready, Ready, Future};
-use std::pin::Pin;
 use std::thread;
 
-// async fn hello() -> Result<HttpResponse> {
-//     Ok(HttpResponse::Ok().body("Hello, Actix Web!"))
-// }
-
-// Middleware to rewrite path for thetaconite.com requests
-pub struct TaconitePathPrefix;
-
-impl<S, B> Transform<S, ServiceRequest> for TaconitePathPrefix
-where
-    S: actix_web::dev::Service<ServiceRequest, Response = ServiceResponse<B>, Error = Error> + 'static,
-    S::Future: 'static,
-    B: 'static,
-{
-    type Response = ServiceResponse<B>;
-    type Error = Error;
-    type Transform = TaconitePathPrefixMiddleware<S>;
-    type InitError = ();
-    type Future = Ready<Result<Self::Transform, Self::InitError>>;
-
-    fn new_transform(&self, service: S) -> Self::Future {
-        ready(Ok(TaconitePathPrefixMiddleware { service }))
-    }
-}
-
-pub struct TaconitePathPrefixMiddleware<S> {
-    service: S,
-}
-
-impl<S, B> actix_web::dev::Service<ServiceRequest> for TaconitePathPrefixMiddleware<S>
-where
-    S: actix_web::dev::Service<ServiceRequest, Response = ServiceResponse<B>, Error = Error> + 'static,
-    S::Future: 'static,
-    B: 'static,
-{
-    type Response = ServiceResponse<B>;
-    type Error = Error;
-    type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>>>>;
-
-    fn poll_ready(&self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        self.service.poll_ready(cx)
-    }
-
-    fn call(&self, mut req: ServiceRequest) -> Self::Future {
-        let host = req.connection_info().host().to_lowercase();
-        if host.contains("thetaconite.com") {
-            let orig_path = req.path();
-            // Only rewrite if not already prefixed
-            if !orig_path.starts_with("/taconite") {
-                let new_path = format!("/taconite{}", orig_path);
-                let new_uri = actix_web::http::Uri::builder()
-                    .path_and_query(new_path)
-                    .build()
-                    .unwrap();
-                req.head_mut().uri = new_uri;
-            }
-        }
-        let fut = self.service.call(req);
-        Box::pin(async move { fut.await })
-    }
+fn is_taconite_domain(ctx: &actix_web::guard::GuardContext) -> bool {
+    ctx.head().headers()
+        .get("host")
+        .and_then(|h| h.to_str().ok())
+        .map(|host| host.to_lowercase().contains("thetaconite.com"))
+        .unwrap_or(false)
 }
 
 // Function to run the Actix Web server
@@ -77,8 +20,21 @@ fn actix_websrv_run() {
             let http_listening_port = 8080;
             HttpServer::new(|| {
                 App::new()
-                    .wrap(TaconitePathPrefix)
-                    .service(Files::new("/", "./static").prefer_utf8(true).index_file("index.html"))
+                // We can serve many domains, each having its own subfolder in ./static/
+                // However, when we rewritten path in a middleware (from /index.html to /taconite/index.html), it was not being used by Actix Files
+                // Because the main Actix -Files service is mounted at the root "/" and doesn't know (?) how to handle the "/taconite" prefix. 
+                // We need to mount two separate Files services - one for taconite and one for default content
+                // fn_guard(is_taconite_domain) is a quick check based on the Host header, so not much overhead
+                    .service(
+                        web::scope("")
+                            .guard(actix_web::guard::fn_guard(is_taconite_domain))
+                            .service(Files::new("/", "./static/taconite").prefer_utf8(true).index_file("index.html"))
+                    )
+                    .service(
+                        web::scope("")
+                            .guard(actix_web::guard::fn_guard(|ctx| !is_taconite_domain(ctx)))
+                            .service(Files::new("/", "./static").prefer_utf8(true).index_file("index.html"))
+                    )
             })
             .bind(format!("0.0.0.0:{}", http_listening_port)).unwrap()  // Don't bind to 127.0.0.1 because it only listens to localhost, not external requests to the IP
             .run()
