@@ -1,0 +1,64 @@
+{
+    "workbench.colorTheme": "Quiet Light",
+    "editor.tokenColorCustomizations": {
+        "[Quiet Light]": {
+            "textMateRules": [
+                {
+                    "scope": "comment",
+                    "settings": {
+                        "foreground": "#008000" // Comment color to green
+                    }
+                }
+            ]
+        }
+    },
+    "editor.fontSize": 18,
+    "terminal.integrated.fontSize": 18,
+    "chat.fontSize": 16,
+    "chat.editor.fontSize": 16,
+    "git.confirmSync": false,
+    "window.restoreWindows": "all",
+    "explorer.confirmDelete": false,
+    "editor.renderControlCharacters": false,
+    "editor.renderWhitespace": "all",
+    "typescript.reportStyleChecksAsWarnings": false,
+    "git.enableSmartCommit": true,
+    "diffEditor.ignoreTrimWhitespace": false,
+    "omnisharp.projectLoadTimeout": 1200,
+    "[typescript]": {
+        "editor.defaultFormatter": "vscode.typescript-language-features"    // "esbenp.prettier-vscode" didn't support FormatSelection for me
+    },
+    "html.format.wrapLineLength": 1000,
+    "[html]": {
+        "editor.defaultFormatter": "vscode.html-language-features"      // // "esbenp.prettier-vscode" didn't support FormatSelection
+    },
+    "editor.columnSelection": false,
+    "python.languageServer": "Pylance",
+    "workbench.editorAssociations": {
+        "*.ipynb": "jupyter-notebook"
+    },
+    "window.newWindowDimensions": "offset",
+    "files.autoSave": "afterDelay",
+    "window.zoomLevel": 1,
+    "security.workspace.trust.enabled": false,
+    "python.defaultInterpreterPath": "",
+    "json.schemas": [],
+    "terminal.explorerKind": "external",
+    "git.autofetch": true,
+    "[json]": {
+        "editor.defaultFormatter": "esbenp.prettier-vscode"
+    },
+    "window.commandCenter": true,
+    "editor.accessibilitySupport": "off",
+    "git.openRepositoryInParentFolders": "always",
+    "[python]": {
+        "editor.formatOnType": true
+    },
+    "editor.stickyScroll.enabled": true,
+    "csharp.experimental.debug.hotReload": true,
+    "amazonQ.telemetry": false,
+    "python.createEnvironment.trigger": "off",
+    "[jsonc]": {
+        "editor.defaultFormatter": "esbenp.prettier-vscode"
+    }
+}

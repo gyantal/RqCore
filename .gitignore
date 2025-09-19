@@ -1,3 +1,7 @@
+
+# Logs
+*.sqlog
+
 # Rust builds go into /target/ folders
 target/
 Cargo.lock
