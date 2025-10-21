@@ -8,7 +8,7 @@
 DAYS_THRESHOLD=35   # Threshold for renewal (days until expiration)
 
 # Run certbot certificates and extract days valid
-echo "Checking certificate validity..."
+echo "$(date '+%Y-%m-%d %H:%M:%S') Checking certificate validity..."
 CERT_OUTPUT=$(sudo certbot certificates 2>/dev/null)
 NUM_DAYS_VALID=$(echo "$CERT_OUTPUT" | grep -oP 'VALID: \K\d+(?= days)' | head -n 1)
 # The script gets the first VALID: X days value. Since certificates for rqcore.com and thetaconite.com were issued together, they should have the same expiration. 
@@ -33,6 +33,23 @@ fi
 # If 35 days or less, proceed with renewal
 echo "Certificates have $NUM_DAYS_VALID days left, renewing..."
 sudo certbot renew --quiet
+
+# After cert renew, copy the new certificate files to a directory owned by rquser
+# chmod: give only rquser Read/Write (4+2 = 6) access.
+# rqcore.com
+sudo cp /etc/letsencrypt/live/rqcore.com/fullchain.pem /home/rquser/RQ/sensitive_data/https_certs/rqcore.com/
+sudo cp /etc/letsencrypt/live/rqcore.com/privkey.pem /home/rquser/RQ/sensitive_data/https_certs/rqcore.com/
+sudo chown rquser:rquser /home/rquser/RQ/sensitive_data/https_certs/rqcore.com/fullchain.pem
+sudo chown rquser:rquser /home/rquser/RQ/sensitive_data/https_certs/rqcore.com/privkey.pem
+sudo chmod 600 /home/rquser/RQ/sensitive_data/https_certs/rqcore.com/fullchain.pem
+sudo chmod 600 /home/rquser/RQ/sensitive_data/https_certs/rqcore.com/privkey.pem
+# thetaconite.com
+sudo cp /etc/letsencrypt/live/thetaconite.com/fullchain.pem /home/rquser/RQ/sensitive_data/https_certs/thetaconite.com/
+sudo cp /etc/letsencrypt/live/thetaconite.com/privkey.pem /home/rquser/RQ/sensitive_data/https_certs/thetaconite.com/
+sudo chown rquser:rquser /home/rquser/RQ/sensitive_data/https_certs/thetaconite.com/fullchain.pem
+sudo chown rquser:rquser /home/rquser/RQ/sensitive_data/https_certs/thetaconite.com/privkey.pem
+sudo chmod 600 /home/rquser/RQ/sensitive_data/https_certs/thetaconite.com/fullchain.pem
+sudo chmod 600 /home/rquser/RQ/sensitive_data/https_certs/thetaconite.com/privkey.pem
 
 # <Maybe not!> Reload web server to apply renewed certificates
 # echo "Reloading WebServer..."

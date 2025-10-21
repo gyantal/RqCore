@@ -9,7 +9,10 @@ spdlog-rs = {version = "0.4.3", features = ["source-location", "log"]}
 time = "0.3.43"
 chrono = "0.4"
 actix-files = "0.6.8"
-actix-web = "4.11" 
+actix-web = { version = "4.11", features = ["rustls-0_23"] }
+rustls = "0.23"
+rustls-pemfile = "2"
+futures = "0.3"
 ibapi = { version = "1.2.2" }
 
 [dev-dependencies]

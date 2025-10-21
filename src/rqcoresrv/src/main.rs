@@ -1,4 +1,3 @@
-
 use std::{thread, sync::Arc, path::Path};
 use log;
 use spdlog::{prelude::*, sink::{Sink, StdStreamSink, FileSink}, formatter::{pattern, PatternFormatter}};
@@ -7,6 +6,38 @@ use chrono::Local;
 use actix_web::{web, App, HttpServer, rt::System};
 use actix_files::Files;
 use ibapi::{prelude::*, Client};
+use rustls::pki_types::{CertificateDer, PrivateKeyDer};
+use rustls::server::{ClientHello, ResolvesServerCert, ResolvesServerCertUsingSni};
+use rustls::sign::CertifiedKey;
+use rustls::crypto::aws_lc_rs::sign::any_supported_type;
+use std::fs::File;
+use std::io::BufReader;
+use std::fmt;
+use rustls_pemfile;
+use rustls::{ServerConfig};
+
+#[cfg(target_os = "windows")]
+const CERT_BASE_PATH: &str = r"h:\.shortcut-targets-by-id\0BzxkV1ug5ZxvVmtic1FsNTM5bHM\GDriveHedgeQuant\shared\GitHubRepos\NonCommitedSensitiveData\cert\RqCore\https_certs"; // gyantal-PC
+#[cfg(target_os = "linux")]
+const CERT_BASE_PATH: &str = "/home/rquser/RQ/sensitive_data/https_certs";
+
+// SNI (Server Name Indication): the hostname sent by the client. Used for selecting HTTPS cert.
+struct SniWithDefaultFallbackResolver {
+    inner: ResolvesServerCertUsingSni, // the main SNI resolver
+    default_ck: Arc<CertifiedKey>, // default certified key to use when no SNI match
+}
+
+impl fmt::Debug for SniWithDefaultFallbackResolver {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("SniWithDefault").finish()
+    }
+}
+
+impl ResolvesServerCert for SniWithDefaultFallbackResolver {
+    fn resolve(&self, ch: ClientHello<'_>) -> Option<Arc<CertifiedKey>> {
+        self.inner.resolve(ch).or_else(|| Some(self.default_ck.clone()))
+    }
+}
 
 fn init_log() -> Result<(), Box<dyn std::error::Error>> {
     // Check if Cargo.toml exists in the current directory, before creating log file in ../../logs/
@@ -73,6 +104,61 @@ fn actix_websrv_run() {
         let sys = System::new(); // actix_web::rt::System
         sys.block_on(async {
             let http_listening_port = 8080;
+            let https_listening_port = 8443;
+
+            // Load certificates and keys
+            fn load_certs(filename: &str) -> Vec<CertificateDer<'static>> {
+                let certfile = File::open(filename).expect(&format!("cannot open certificate file {}", filename));
+                let mut reader = BufReader::new(certfile);
+                rustls_pemfile::certs(&mut reader).collect::<Result<Vec<_>, _>>().expect(&format!("invalid certificate in file {}", filename))
+            }
+
+            fn load_private_key(filename: &str) -> PrivateKeyDer<'static> {
+                let keyfile = File::open(filename).expect(&format!("cannot open private key file {}", filename));
+                let mut reader = BufReader::new(keyfile);
+                rustls_pemfile::private_key(&mut reader).expect(&format!("invalid private key in file {}", filename)).expect(&format!("no private key found in {}", filename))
+            }
+
+            let rq_certs = load_certs(&format!("{}/rqcore.com/fullchain.pem", CERT_BASE_PATH));
+            let rq_key = load_private_key(&format!("{}/rqcore.com/privkey.pem", CERT_BASE_PATH));
+            let rq_signing_key = any_supported_type(&rq_key).expect("unsupported rqcore private key type");
+            let rq_certified_key = CertifiedKey::new(rq_certs, rq_signing_key);
+
+            let theta_certs = load_certs(&format!("{}/thetaconite.com/fullchain.pem", CERT_BASE_PATH));
+            let theta_key = load_private_key(&format!("{}/thetaconite.com/privkey.pem", CERT_BASE_PATH));
+            let theta_signing_key = any_supported_type(&theta_key).expect("unsupported thetaconite private key type");
+            let theta_certified_key = CertifiedKey::new(theta_certs, theta_signing_key);
+
+            // Default cert for 'localhost' and IP. Created as: openssl req -x509 -nodes -days 3650 -newkey rsa:2048 -keyout privkey.pem -out fullchain.pem -subj "/CN=localhost" -addext "subjectAltName=DNS:localhost,DNS:127.0.0.1"
+            let default_certs = load_certs(&format!("{}/localhost/fullchain.pem", CERT_BASE_PATH));
+            let default_key = load_private_key(&format!("{}/localhost/privkey.pem", CERT_BASE_PATH));
+            let default_signing_key = any_supported_type(&default_key).expect("unsupported default key");
+            let default_certified_key = CertifiedKey::new(default_certs, default_signing_key);
+
+            // the SNI (Server Name Indication) hostname sent by the client
+            // ResolvesServerCertUsingSni matches DNS hostnames, not IPs, and SNI itself is defined for hostnames (not addresses). 
+            // So IP 127.0.0.1 won’t ever hit an entry in that resolver. We need a SniWithDefaultFallbackResolver to provide a default cert for IP connections.
+            let mut sni_resolver = ResolvesServerCertUsingSni::new();
+            sni_resolver.add("rqcore.com", rq_certified_key.clone()).expect("Invalid DNS name for rqcore.com");
+            sni_resolver.add("www.rqcore.com", rq_certified_key.clone()).expect("Invalid DNS name for www.rqcore.com");
+            sni_resolver.add("thetaconite.com", theta_certified_key.clone()).expect("Invalid DNS name for thetaconite.com");
+            sni_resolver.add("www.thetaconite.com", theta_certified_key.clone()).expect("Invalid DNS name for www.thetaconite.com");
+            sni_resolver.add("localhost", default_certified_key.clone()).expect("Invalid localhost DNS name"); // default cert for localhost and IP e.g. 127.0.0.1
+
+            let cert_resolver = Arc::new(SniWithDefaultFallbackResolver {
+                inner: sni_resolver,
+                default_ck: Arc::new(default_certified_key.clone()), // use the default (for 'localhost') for IP connections when no domain name sent by client
+            });
+
+            let tls_config = ServerConfig::builder_with_provider(Arc::new(rustls::crypto::aws_lc_rs::default_provider()))
+                .with_safe_default_protocol_versions()
+                .unwrap()
+                .with_no_client_auth()
+                .with_cert_resolver(cert_resolver);
+
+            // Advertise both http/2 and http/1.1 support. However Actix's bind_rustls_0_23() automatically adds them (and in future versions, it might add http/3 as well). So, don't explicetly add them here.
+            // tls_config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
+
             HttpServer::new(|| {
                 App::new()
                 // We can serve many domains, each having its own subfolder in ./static/
@@ -92,6 +178,7 @@ fn actix_websrv_run() {
                     )
             })
             .bind(format!("0.0.0.0:{}", http_listening_port)).unwrap()  // Don't bind to 127.0.0.1 because it only listens to localhost, not external requests to the IP
+            .bind_rustls_0_23(format!("0.0.0.0:{}", https_listening_port), tls_config).unwrap()
             .run()
             .await
             .unwrap();
