@@ -91,11 +91,20 @@ fn init_log() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn is_taconite_domain(ctx: &actix_web::guard::GuardContext) -> bool {
-    ctx.head().headers()
-        .get("host")
-        .and_then(|h| h.to_str().ok())
-        .map(|host| host.to_lowercase().contains("thetaconite.com"))
-        .unwrap_or(false)
+    // Prefer HTTP/2 URI host or HTTP/2 authority; But fallback to Host headeri if URI host is missing (e.g. in HTTP/1.1)
+    let uri_host = ctx.head().uri.host(); // works only in HTTP/2 as HTTPS protocol. (in HTTP/1.1 head().uri.host() is None).
+    let host_header = ctx.head().headers().get("host"); // works only in HTTP/1.1, as HTTP protocol
+    let authority_header = ctx.head().headers().get(":authority"); // HTTP/2 pseudo-header. CURL doesn't fill it, but Chrome/Edge fills it with "thetaconite.com" (in case the Uri.host() wouldn't work, this could be used)
+
+    let host = uri_host
+        .or_else(|| {
+            host_header
+            .and_then(|h| h.to_str().ok())
+        })
+        .unwrap_or("");
+    
+    println!("DEBUG: UriHost='{:?}' HeaderHost='{:?}' HeaderAuthority='{:?}'", uri_host, host_header, authority_header, );
+    host.to_lowercase().contains("thetaconite.com")
 }
 
 fn actix_websrv_run() {
@@ -159,6 +168,12 @@ fn actix_websrv_run() {
             // Advertise both http/2 and http/1.1 support. However Actix's bind_rustls_0_23() automatically adds them (and in future versions, it might add http/3 as well). So, don't explicetly add them here.
             // tls_config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
 
+            // Test locally the impersonation of multiple domains with different subfolders
+            // curl -v --insecure https://localhost:8443
+            // curl -v --insecure https://127.0.0.1:8443
+            // curl -v --resolve rqcore.com:8443:127.0.0.1 --insecure https://rqcore.com:8443/  
+            // curl -v --resolve thetaconite.com:8443:127.0.0.1 --insecure https://thetaconite.com:8443/ 
+            // curl -v --resolve thetaconite.com:8080:127.0.0.1 --insecure http://thetaconite.com:8080/
             HttpServer::new(|| {
                 App::new()
                 // We can serve many domains, each having its own subfolder in ./static/
