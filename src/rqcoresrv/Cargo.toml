@@ -12,7 +12,8 @@ actix-files = "0.6.8"
 actix-web = { version = "4.11", features = ["rustls-0_23"] }
 rustls = "0.23"
 rustls-pemfile = "2"
-futures = "0.3"
+reqwest = { version = "0.12", features = ["rustls-tls", "http2", "json"] }
 ibapi = { version = "1.2.2" }
+tokio   = { version = "1.48", features = ["fs", "macros", "rt-multi-thread"] }
 
 [dev-dependencies]

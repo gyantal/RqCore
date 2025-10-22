@@ -43,7 +43,8 @@ cd $ROOT
 # 2. Compile and test
 echo "*** Compiling in release mode..."
 cd $ROOT/staging/src/rqcoresrv
-cargo build --release 2>&1
+# If running in crontab, $PATH is minimalist, so we need to specify full path to cargo. Otherwise "cargo: command not found"
+/home/rquser/.cargo/bin/cargo build --release 2>&1
 
 echo "*** Running tests..."
 #cd ../rqcoresrv_test

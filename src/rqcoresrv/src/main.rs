@@ -1,4 +1,4 @@
-use std::{thread, sync::Arc, path::Path};
+use std::{thread, sync::Arc, path::Path, path::PathBuf};
 use log;
 use spdlog::{prelude::*, sink::{Sink, StdStreamSink, FileSink}, formatter::{pattern, PatternFormatter}};
 use time::macros::datetime;
@@ -15,6 +15,7 @@ use std::io::BufReader;
 use std::fmt;
 use rustls_pemfile;
 use rustls::{ServerConfig};
+use reqwest;
 
 #[cfg(target_os = "windows")]
 const CERT_BASE_PATH: &str = r"h:\.shortcut-targets-by-id\0BzxkV1ug5ZxvVmtic1FsNTM5bHM\GDriveHedgeQuant\shared\GitHubRepos\NonCommitedSensitiveData\cert\RqCore\https_certs"; // gyantal-PC
@@ -201,7 +202,7 @@ fn actix_websrv_run() {
     });
 }
 
-fn display_console_menu() {
+async fn display_console_menu() {
     use std::io::{self, Write};
 
     loop {
@@ -212,7 +213,8 @@ fn display_console_menu() {
         println!("\x1b[35m----  (type and press Enter)  ----\x1b[0m"); // Print in magenta using ANSI escape code
         println!("1. Say Hello. Don't do anything. Check responsivenes.");
         println!("2. Test IbAPI.");
-        println!("3. Exit gracefully (Avoid Ctrl-^C).");
+        println!("3. Test HttpDownload.");
+        println!("9. Exit gracefully (Avoid Ctrl-^C).");
         std::io::stdout().flush().unwrap(); // Flush to ensure prompt is shown
 
         let mut input = String::new();
@@ -226,6 +228,9 @@ fn display_console_menu() {
                         test_ibapi();
                     }
                     "3" => {
+                        test_http_download().await;
+                    }
+                    "9" => {
                         println!("Exiting gracefully...");
                         break;
                     }
@@ -270,6 +275,51 @@ fn test_ibapi() {
     // client is dropped at the end of the scope, disconnecting from TWS (checked)
 }
 
+async fn test_http_download() {
+    // Use tokio::spawn and wait for the task to complete
+    let handle = tokio::spawn(async {
+        match test_http_download_impl().await {
+            Ok(p) => println!("Saved to {}", p.display()),
+            Err(e) => eprintln!("Error: {e}"),
+        }
+    });
+    
+    // Wait for the download to complete
+    if let Err(e) = handle.await {
+        eprintln!("Task failed: {}", e);
+    }
+}
+
+pub async fn test_http_download_impl() -> Result<PathBuf, Box<dyn std::error::Error>> {
+    println!("test_http_download() started.");
+    
+    // Load cookies from file
+    let cookies = std::fs::read_to_string("../../data/fast_run_1_headers.txt")?;
+    
+    // Target URL
+    const URL: &str = "https://seekingalpha.com/api/v3/quant_pro_portfolio/transactions?include=ticker.slug%2Cticker.name%2Cticker.companyName&page[size]=1000&page[number]=1";
+
+    let ts = Local::now().format("%Y%m%dT%H%M%S").to_string();
+    let dir = Path::new("../../data");
+    let path: PathBuf = dir.join(format!("fast_run_1_src_{}.json", ts));
+
+    tokio::fs::create_dir_all(dir).await?;
+
+    // Build client with cookies
+    let client = reqwest::Client::builder()
+        .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+        .build()?;
+
+    let resp = client.get(URL)
+        .header("Cookie", cookies.trim())
+        .send()
+        .await?;
+
+    let body = resp.bytes().await?;
+    tokio::fs::write(&path, &body).await?;
+
+    Ok(path)
+}
 
 #[actix_web::main] // or #[tokio::main]
 async fn main() -> std::io::Result<()> {
@@ -278,7 +328,7 @@ async fn main() -> std::io::Result<()> {
 
     actix_websrv_run(); // Run the Actix Web server in a separate thread
 
-    display_console_menu();
+    display_console_menu().await;  // Note: now we await the menu
 
     log::info!("END RqCoreSrv"); // The OS will clean up the log file handles and flush the file when the process exits
     Ok(())

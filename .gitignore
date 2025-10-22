@@ -2,6 +2,9 @@
 # Logs
 *.sqlog
 
+# data folder can have sensitive data or large files
+/data
+
 # Rust builds go into /target/ folders
 target/
 Cargo.lock
