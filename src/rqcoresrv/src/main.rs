@@ -294,13 +294,13 @@ pub async fn test_http_download_impl() -> Result<PathBuf, Box<dyn std::error::Er
     println!("test_http_download() started.");
     
     // Load cookies from file
-    let cookies = std::fs::read_to_string("../../data/fast_run_1_headers.txt")?;
+    let cookies = std::fs::read_to_string("../../../rqcore_data/fast_run_1_headers.txt")?;
     
     // Target URL
     const URL: &str = "https://seekingalpha.com/api/v3/quant_pro_portfolio/transactions?include=ticker.slug%2Cticker.name%2Cticker.companyName&page[size]=1000&page[number]=1";
 
     let ts = Local::now().format("%Y%m%dT%H%M%S").to_string();
-    let dir = Path::new("../../data");
+    let dir = Path::new("../../../rqcore_data");
     let path: PathBuf = dir.join(format!("fast_run_1_src_{}.json", ts));
 
     tokio::fs::create_dir_all(dir).await?;
