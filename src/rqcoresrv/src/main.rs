@@ -1,11 +1,11 @@
 use std::{thread, sync::Arc, path::Path};
 use log;
 use spdlog::{prelude::*, sink::{Sink, StdStreamSink, FileSink}, formatter::{pattern, PatternFormatter}};
-// use time::macros::datetime;
+use time::macros::datetime;
 use chrono::Local;
 use actix_web::{web, App, HttpServer, rt::System};
 use actix_files::Files;
-// use ibapi::{prelude::*, Client};
+use ibapi::{prelude::*, market_data::historical::WhatToShow};
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use rustls::server::{ClientHello, ResolvesServerCert, ResolvesServerCertUsingSni};
 use rustls::sign::CertifiedKey;
@@ -229,7 +229,7 @@ async fn display_console_menu() {
                         println!("Hello. I am not crashed yet! :)");
                     }
                     "2" => {
-                        test_ibapi();
+                        test_ibapi().await;
                     }
                     "3" => {
                         match fast_running::test_http_download().await {
@@ -254,32 +254,34 @@ async fn display_console_menu() {
     }
 }
 
-fn test_ibapi() {
-    // TODO: this is IbAPI v.1.2.2. When v2.0 comes out, we have to update this code. And use the async version.
-    // >Choose async, realtime bars streaming is only available in async. We might want to stream and check 200 tickers at the same time.
+async fn test_ibapi() {
+    // Use the async (default): Non-blocking client, and not the sync: Blocking client.
+    // Choose async, realtime bars streaming is only available in async. We might want to stream and check 200 tickers at the same time.
     // The sync version just polls 1 snapshot realtime value.
-    // let connection_url = "34.251.1.119:7303"; // port info is fine here. OK. Temporary anyway, and login is impossible, because there are 2 firewalls with source-IP check: AwsVm, IbTWS
-    // let client = Client::connect(connection_url, 63).expect("connection to TWS failed!");
+    // let connection_url_dcmain = "34.251.1.119:7303"; // port info is fine here. OK. Temporary anyway, and login is impossible, because there are 2 firewalls with source-IP check: AwsVm, IbTWS
+    let connection_url_gyantal = "34.251.1.119:7301";
+    let client = Client::connect(connection_url_gyantal, 100).await.expect("connection to TWS failed!");
+    println!("Successfully connected to TWS");
 
-    // let contract = Contract::stock("AAPL");
+    let contract = Contract::stock("AAPL").build();
 
-    // let historical_data = client
-    //     .historical_data(
-    //         &contract,
-    //         Some(datetime!(2023-04-11 20:00 UTC)),
-    //         1.days(),
-    //         HistoricalBarSize::Hour,
-    //         HistoricalWhatToShow::Trades,
-    //         true,
-    //     )
-    //     .expect("historical data request failed");
+    let historical_data = client
+        .historical_data(
+            &contract,
+            Some(datetime!(2023-04-11 20:00 UTC)),
+            1.days(),
+            HistoricalBarSize::Hour,
+            Some(WhatToShow::Trades),
+            TradingHours::Regular,
+        ).await
+        .expect("historical data request failed");
 
-    // println!("start: {:?}, end: {:?}", historical_data.start, historical_data.end);
+    println!("start: {:?}, end: {:?}", historical_data.start, historical_data.end);
 
-    // for bar in &historical_data.bars {
-    //     println!("{bar:?}");
-    // }
-    // // client is dropped at the end of the scope, disconnecting from TWS (checked)
+    for bar in &historical_data.bars {
+        println!("{bar:?}");
+    }
+    // client is dropped at the end of the scope, disconnecting from TWS (checked)
 }
 
 #[actix_web::main] // or #[tokio::main]

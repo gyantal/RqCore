@@ -3,6 +3,7 @@ name = "rqcoresrv"
 version = "0.1.0"
 edition = "2024"
 
+# For inner dependencies, run 'cargo tree' or e.g. 'cargo tree | grep -E "(openssl|ibapi)"' (not show the real dependency) or just one package: 'cargo tree -p ibapi'
 [dependencies]
 tokio = { version = "1.0", features = ["full"] }
 # tokio   = { version = "1.48", features = ["fs", "macros", "rt-multi-thread"] }
@@ -14,7 +15,9 @@ actix-files = "0.6.8"
 actix-web = { version = "4.11", features = ["rustls-0_23"] }
 rustls = "0.23"
 rustls-pemfile = "2"
-reqwest = { version = "0.12", features = ["rustls-tls", "http2", "json"] }
+# Reqwest's default features include BOTH rustls-tls AND default-tls (which pulls hyper-tls → native-tls → openssl-sys). We should use rustls, not the openssl libraries of the Linux system.
+# reqwest = { version = "0.12", features = ["rustls-tls", "http2", "json"] }
+reqwest = { version = "0.12", features = ["rustls-tls", "http2", "json"], default-features = false }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 
