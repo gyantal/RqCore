@@ -21,6 +21,10 @@ mod services {
 }
 use services::fast_running;
 
+mod broker_common {
+    pub mod brokers_watcher;
+}
+
 #[cfg(target_os = "windows")]
 const CERT_BASE_PATH: &str = r"h:\.shortcut-targets-by-id\0BzxkV1ug5ZxvVmtic1FsNTM5bHM\GDriveHedgeQuant\shared\GitHubRepos\NonCommitedSensitiveData\cert\RqCore\https_certs"; // gyantal-PC
 #[cfg(target_os = "linux")]
@@ -206,7 +210,7 @@ fn actix_websrv_run() {
     });
 }
 
-async fn display_console_menu() {
+async fn display_console_menu(brokers_watcher: &mut broker_common::brokers_watcher::BrokersWatcher) {
     use std::io::{self, Write};
 
     loop {
@@ -216,8 +220,9 @@ async fn display_console_menu() {
         // Actually, I have to implement my own RqConsole anyway, because we need to log to file, or log the timestamps as well
         println!("\x1b[35m----  (type and press Enter)  ----\x1b[0m"); // Print in magenta using ANSI escape code
         println!("1. Say Hello. Don't do anything. Check responsivenes.");
-        println!("2. Test IbAPI.");
-        println!("3. Test HttpDownload.");
+        println!("2. Test IbAPI: historical data");
+        println!("3. Test IbAPI: trade");
+        println!("4. Test HttpDownload.");
         println!("9. Exit gracefully (Avoid Ctrl-^C).");
         std::io::stdout().flush().unwrap(); // Flush to ensure prompt is shown
 
@@ -229,9 +234,12 @@ async fn display_console_menu() {
                         println!("Hello. I am not crashed yet! :)");
                     }
                     "2" => {
-                        test_ibapi().await;
+                        test_ibapi_hist_data().await;
                     }
                     "3" => {
+                        test_ibapi_trade(brokers_watcher).await;
+                    }
+                    "4" => {
                         match fast_running::test_http_download().await {
                             Ok(_) => println!("Download completed successfully"),
                             Err(e) => eprintln!("Error: {e}"),
@@ -254,13 +262,13 @@ async fn display_console_menu() {
     }
 }
 
-async fn test_ibapi() {
+async fn test_ibapi_hist_data() {
     // Use the async (default): Non-blocking client, and not the sync: Blocking client.
     // Choose async, realtime bars streaming is only available in async. We might want to stream and check 200 tickers at the same time.
     // The sync version just polls 1 snapshot realtime value.
     // let connection_url_dcmain = "34.251.1.119:7303"; // port info is fine here. OK. Temporary anyway, and login is impossible, because there are 2 firewalls with source-IP check: AwsVm, IbTWS
     let connection_url_gyantal = "34.251.1.119:7301";
-    let client = Client::connect(connection_url_gyantal, 100).await.expect("connection to TWS failed!");
+    let client = Client::connect(connection_url_gyantal, 99).await.expect("connection to TWS failed!");
     println!("Successfully connected to TWS");
 
     let contract = Contract::stock("AAPL").build();
@@ -284,15 +292,50 @@ async fn test_ibapi() {
     // client is dropped at the end of the scope, disconnecting from TWS (checked)
 }
 
+async fn test_ibapi_trade(brokers_watcher: &mut broker_common::brokers_watcher::BrokersWatcher) {
+    let ib_client_dcmain = brokers_watcher.gateways[0].ib_client.as_ref().unwrap(); // 0 is dcmain, 1 is gyantal
+
+    let contract = Contract::stock("PM").build();
+
+    // ib_client_gyantal: Error: Parse(5, "Invalid Real-time Query:No market data permissions for NYSE STK. Requested market data requires additional subscription for API. See link in 'Market Data Connections' dialog for more details."
+    let mut subscription = ib_client_dcmain
+        .realtime_bars(&contract, RealtimeBarSize::Sec5, RealtimeWhatToShow::Trades, TradingHours::Regular).await
+        .expect("realtime bars request failed!");
+
+    while let Some(bar_result) = subscription.next().await {
+        match bar_result {
+            Ok(bar) => println!("{bar:?}"),
+            Err(e) => eprintln!("Error: {e:?}"),
+        }
+        break; // just 1 bar for testing, otherwise it would block here forever
+    }
+
+    // This will do a real trade, so commented out for safety. Just comment it back in when you want to test.
+    // let ib_client_gyantal = brokers_watcher.gateways[1].ib_client.as_ref().unwrap();
+    // let order_id = ib_client_gyantal.order(&contract)
+    //     .buy(1)
+    //     .market()
+    //     .submit()
+    //     .await
+    //     .expect("order submission failed!");
+    // println!("Order submitted with ID: {}", order_id);
+}
+
 #[actix_web::main] // or #[tokio::main]
 async fn main() -> std::io::Result<()> {
     init_log().expect("Failed to initialize logging");
     info!("***Starting RqCoreSrv...");
 
+    // Global static is difficult in Rust (multithreading, memory safety, ownership, Mutex, etc.)
+    // For a while, avoid global state in general. Instead, construct the object somewhere early (perhaps in main), then pass mutable references to that object into the places that need it.
+    let mut brokers_watcher = broker_common::brokers_watcher::BrokersWatcher::new();
+    brokers_watcher.init().await;
+
     actix_websrv_run(); // Run the Actix Web server in a separate thread
 
-    display_console_menu().await;  // Note: now we await the menu
+    display_console_menu(&mut brokers_watcher).await;
 
+    brokers_watcher.exit().await;
     log::info!("END RqCoreSrv"); // The OS will clean up the log file handles and flush the file when the process exits
     Ok(())
 }
