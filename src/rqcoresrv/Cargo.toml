@@ -4,16 +4,23 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+tokio = { version = "1.0", features = ["full"] }
+# tokio   = { version = "1.48", features = ["fs", "macros", "rt-multi-thread"] }
 log = "0.4.28"
 spdlog-rs = {version = "0.4.3", features = ["source-location", "log"]}
 time = "0.3.43"
-chrono = "0.4"
+chrono = { version = "0.4", features = ["serde"] }
 actix-files = "0.6.8"
 actix-web = { version = "4.11", features = ["rustls-0_23"] }
 rustls = "0.23"
 rustls-pemfile = "2"
 reqwest = { version = "0.12", features = ["rustls-tls", "http2", "json"] }
-ibapi = { version = "1.2.2" }
-tokio   = { version = "1.48", features = ["fs", "macros", "rt-multi-thread"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# ibapi: Async only (default features)
+ibapi = "2.0"
+# Async + blocking together
+# ibapi = { version = "2.0", default-features = false, features = ["sync", "async"] }
 
 [dev-dependencies]

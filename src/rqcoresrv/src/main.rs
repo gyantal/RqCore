@@ -1,11 +1,11 @@
-use std::{thread, sync::Arc, path::Path, path::PathBuf};
+use std::{thread, sync::Arc, path::Path};
 use log;
 use spdlog::{prelude::*, sink::{Sink, StdStreamSink, FileSink}, formatter::{pattern, PatternFormatter}};
-use time::macros::datetime;
+// use time::macros::datetime;
 use chrono::Local;
 use actix_web::{web, App, HttpServer, rt::System};
 use actix_files::Files;
-use ibapi::{prelude::*, Client};
+// use ibapi::{prelude::*, Client};
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use rustls::server::{ClientHello, ResolvesServerCert, ResolvesServerCertUsingSni};
 use rustls::sign::CertifiedKey;
@@ -15,7 +15,11 @@ use std::io::BufReader;
 use std::fmt;
 use rustls_pemfile;
 use rustls::{ServerConfig};
-use reqwest;
+
+mod services {
+    pub mod fast_running;
+}
+use services::fast_running;
 
 #[cfg(target_os = "windows")]
 const CERT_BASE_PATH: &str = r"h:\.shortcut-targets-by-id\0BzxkV1ug5ZxvVmtic1FsNTM5bHM\GDriveHedgeQuant\shared\GitHubRepos\NonCommitedSensitiveData\cert\RqCore\https_certs"; // gyantal-PC
@@ -228,7 +232,10 @@ async fn display_console_menu() {
                         test_ibapi();
                     }
                     "3" => {
-                        test_http_download().await;
+                        match fast_running::test_http_download().await {
+                            Ok(_) => println!("Download completed successfully"),
+                            Err(e) => eprintln!("Error: {e}"),
+                        }
                     }
                     "9" => {
                         println!("Exiting gracefully...");
@@ -251,74 +258,28 @@ fn test_ibapi() {
     // TODO: this is IbAPI v.1.2.2. When v2.0 comes out, we have to update this code. And use the async version.
     // >Choose async, realtime bars streaming is only available in async. We might want to stream and check 200 tickers at the same time.
     // The sync version just polls 1 snapshot realtime value.
-    let connection_url = "34.251.1.119:7303"; // port info is fine here. OK. Temporary anyway, and login is impossible, because there are 2 firewalls with source-IP check: AwsVm, IbTWS
-    let client = Client::connect(connection_url, 63).expect("connection to TWS failed!");
+    // let connection_url = "34.251.1.119:7303"; // port info is fine here. OK. Temporary anyway, and login is impossible, because there are 2 firewalls with source-IP check: AwsVm, IbTWS
+    // let client = Client::connect(connection_url, 63).expect("connection to TWS failed!");
 
-    let contract = Contract::stock("AAPL");
+    // let contract = Contract::stock("AAPL");
 
-    let historical_data = client
-        .historical_data(
-            &contract,
-            Some(datetime!(2023-04-11 20:00 UTC)),
-            1.days(),
-            HistoricalBarSize::Hour,
-            HistoricalWhatToShow::Trades,
-            true,
-        )
-        .expect("historical data request failed");
+    // let historical_data = client
+    //     .historical_data(
+    //         &contract,
+    //         Some(datetime!(2023-04-11 20:00 UTC)),
+    //         1.days(),
+    //         HistoricalBarSize::Hour,
+    //         HistoricalWhatToShow::Trades,
+    //         true,
+    //     )
+    //     .expect("historical data request failed");
 
-    println!("start: {:?}, end: {:?}", historical_data.start, historical_data.end);
+    // println!("start: {:?}, end: {:?}", historical_data.start, historical_data.end);
 
-    for bar in &historical_data.bars {
-        println!("{bar:?}");
-    }
-    // client is dropped at the end of the scope, disconnecting from TWS (checked)
-}
-
-async fn test_http_download() {
-    // Use tokio::spawn and wait for the task to complete
-    let handle = tokio::spawn(async {
-        match test_http_download_impl().await {
-            Ok(p) => println!("Saved to {}", p.display()),
-            Err(e) => eprintln!("Error: {e}"),
-        }
-    });
-    
-    // Wait for the download to complete
-    if let Err(e) = handle.await {
-        eprintln!("Task failed: {}", e);
-    }
-}
-
-pub async fn test_http_download_impl() -> Result<PathBuf, Box<dyn std::error::Error>> {
-    println!("test_http_download() started.");
-    
-    // Load cookies from file
-    let cookies = std::fs::read_to_string("../../../rqcore_data/fast_run_1_headers.txt")?;
-    
-    // Target URL
-    const URL: &str = "https://seekingalpha.com/api/v3/quant_pro_portfolio/transactions?include=ticker.slug%2Cticker.name%2Cticker.companyName&page[size]=1000&page[number]=1";
-
-    let ts = Local::now().format("%Y%m%dT%H%M%S").to_string();
-    let dir = Path::new("../../../rqcore_data");
-    let path: PathBuf = dir.join(format!("fast_run_1_src_{}.json", ts));
-
-    tokio::fs::create_dir_all(dir).await?;
-
-    // Build client with cookies
-    let client = reqwest::Client::builder()
-        .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-        .build()?;
-
-    let resp = client.get(URL)
-        .header("Cookie", cookies.trim())
-        .send()
-        .await?;
-
-    let body = resp.bytes().await?;
-    tokio::fs::write(&path, &body).await?;
-
-    Ok(path)
+    // for bar in &historical_data.bars {
+    //     println!("{bar:?}");
+    // }
+    // // client is dropped at the end of the scope, disconnecting from TWS (checked)
 }
 
 #[actix_web::main] // or #[tokio::main]
