@@ -48,6 +48,11 @@ pub struct BrokersWatcher {
 }
 
 impl BrokersWatcher {
+    #[cfg(target_os = "windows")]
+    const GATEWAY_CLIENT_ID: i32 = 201; // gyantal:201, Daya:202, Balazs: 203, TODO: in the future it should come automatically from a function.
+    #[cfg(target_os = "linux")]
+    const GATEWAY_CLIENT_ID: i32 = 200;
+
     pub fn new() -> Self {
         Self {
             gateways: Vec::new(),
@@ -58,12 +63,13 @@ impl BrokersWatcher {
         println!("BrokersWatcher.init() start");
         // Initialize all gateways with their default configurations
         let connection_url_dcmain = "34.251.1.119:7303"; // port info is fine here. OK. Temporary anyway, and login is impossible, because there are 2 firewalls with source-IP check: AwsVm, IbTWS
-        let mut gateway0 = Gateway::new(connection_url_dcmain, 100);
+        let client_id = Self::GATEWAY_CLIENT_ID;
+        let mut gateway0 = Gateway::new(connection_url_dcmain, client_id);
         gateway0.init().await;
         self.gateways.push(gateway0);
 
         let connection_url_gyantal = "34.251.1.119:7301";
-        let mut gateway1 = Gateway::new(connection_url_gyantal, 100);
+        let mut gateway1 = Gateway::new(connection_url_gyantal, client_id);
         gateway1.init().await;
         self.gateways.push(gateway1);
         

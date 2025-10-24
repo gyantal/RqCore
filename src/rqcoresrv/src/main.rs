@@ -18,7 +18,7 @@ use rustls_pemfile;
 use rustls::{ServerConfig};
 
 mod services {
-    pub mod fast_runer;
+    pub mod fast_runner;
 }
 
 mod broker_common {
@@ -119,7 +119,7 @@ fn is_taconite_domain(ctx: &actix_web::guard::GuardContext) -> bool {
 fn actix_websrv_run() {
     thread::spawn(|| {
         // Use a separate Tokio runtime for the server thread
-        let sys = System::new(); // actix_web::rt::System
+        let sys = System::new(); // actix_web::rt::System to be able to use async in this new OS thread
         sys.block_on(async {
             let http_listening_port = 8080;
             let https_listening_port = 8443;
@@ -213,7 +213,7 @@ fn actix_websrv_run() {
 async fn display_console_menu(brokers_watcher_guard: &Arc<Mutex<broker_common::brokers_watcher::BrokersWatcher>>) {
     println!("display_console_menu(): start");
 
-    let mut fast_runner = services::fast_runer::FastRunner::new();
+    let mut fast_runner = services::fast_runner::FastRunner::new();
 
     loop {
         println!();

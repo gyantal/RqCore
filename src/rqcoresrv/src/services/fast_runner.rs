@@ -227,20 +227,25 @@ impl FastRunner {
 
     pub async fn start_fastrunning_loop(&mut self, brokers_watcher_guard: &Arc<Mutex<brokers_watcher::BrokersWatcher>>) {
         self.is_loop_active.store(true, Ordering::SeqCst);
-        let is_active = self.is_loop_active.clone();
+        let is_loop_active_clone = self.is_loop_active.clone(); // Clone the Arc, not the AtomicBool
         println!("start_fastrunning_loop() started.");
-        let brokers_watcher_guard_clone = brokers_watcher_guard.clone();
+        let brokers_watcher_guard_clone = brokers_watcher_guard.clone(); // Clone the Arc, not BrokersWatcher
 
+        // tried to use tokio::spawn or actix_web::rt::spawn to start a task on the ThreadPool, but had problems that they were not called, because
+        // the current thread is the ConsoleMenu main thread, and I never return from this thread. It should have worked though.
+        // After 6 hours, I gave up and spawn a new OS thread here. 
+        // The good side is that this new OS thread can process CPU-bound tasks faster than waiting for the ThreadPool delegation
         thread::spawn(move || {
             println!("FastRunner thread started");
-            let sys = System::new();
+            let sys = System::new(); // actix_web::rt::System to be able to use async in this new OS thread
             sys.block_on(async {
+                // TODO: this will lock the brokers_watcher for the whole loop duration, which efficient, but it is bad, because other parts of the program cannot access it while this loop is running.
+                let brokers_watcher = brokers_watcher_guard_clone.lock().unwrap();
                 let mut fast_runner2 = FastRunner::new(); // fake another instance, because self cannot be used, because it will be out of scope after this function returns
-                while is_active.load(Ordering::SeqCst) {
-                    println!("Loop iteration");
 
+                while is_loop_active_clone.load(Ordering::SeqCst) {
+                    println!("Loop iteration");
                     // TEMP: Use the brokers inside the loop
-                    let brokers_watcher = brokers_watcher_guard_clone.lock().unwrap();
                     let _ib_client_dcmain = brokers_watcher.gateways[0].ib_client.as_ref().unwrap(); // 0 is dcmain, 1 is gyantal
                     let conn_url = &(brokers_watcher.gateways[0].connection_url); // 0 is dcmain, 1 is gyantal
                     println!("Loop iteration. connUrl={}", conn_url);
