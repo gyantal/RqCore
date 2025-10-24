@@ -21,6 +21,7 @@ impl Gateway {
     }
 
     pub async fn init(&mut self) {
+        println!("Gateway.init() start");
         match Client::connect(&self.connection_url, self.client_id).await {
             Ok(client) => {
                 self.ib_client = Some(client);
@@ -54,6 +55,7 @@ impl BrokersWatcher {
     }
 
     pub async fn init(&mut self) {
+        println!("BrokersWatcher.init() start");
         // Initialize all gateways with their default configurations
         let connection_url_dcmain = "34.251.1.119:7303"; // port info is fine here. OK. Temporary anyway, and login is impossible, because there are 2 firewalls with source-IP check: AwsVm, IbTWS
         let mut gateway0 = Gateway::new(connection_url_dcmain, 100);

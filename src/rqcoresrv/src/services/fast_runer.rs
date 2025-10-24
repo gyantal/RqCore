@@ -1,0 +1,264 @@
+use chrono::Local;
+use std::path::PathBuf;
+use std::path::Path;
+use serde::Deserialize;
+use std::collections::HashMap;
+use std::{thread};
+use actix_web::{rt::System};
+use std::sync::{Arc, atomic::{AtomicBool, Ordering}, Mutex, MutexGuard};
+
+use crate::broker_common::brokers_watcher;
+
+#[derive(Debug, Deserialize)]
+pub struct ApiResponse {
+    pub data: Vec<Transaction>,
+    pub included: Vec<Stock>,
+}
+
+#[derive(Debug, Deserialize)]
+#[allow(dead_code)]
+pub struct Transaction {
+    pub id: String,  // in JNOS, it is a String
+    #[serde(rename = "type")]
+    pub type_: String,
+    pub attributes: TransactionAttributes,
+    pub relationships: TransactionRelationships,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+#[allow(dead_code)]
+pub enum Weight {
+    Number(f64),
+    String(String),
+}
+
+#[derive(Debug, Deserialize)]
+#[allow(dead_code)]
+pub struct TransactionAttributes {
+    pub id: i64,
+    pub action: String,
+    #[serde(rename = "actionDate")]
+    pub action_date: String,
+    #[serde(rename = "startingWeight")]
+    pub starting_weight: Option<Weight>,
+    #[serde(rename = "newWeight")]
+    pub new_weight: String,
+    pub rule: Option<String>,
+    pub status: Option<String>, // only appears in JSON, when stock market is closed. e.g. "status": "closed",
+    pub price: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct TransactionRelationships {
+    pub ticker: TickerRelationship,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct TickerRelationship {
+    pub data: TickerData,
+}
+
+#[derive(Debug, Deserialize)]
+#[allow(dead_code)]
+pub struct TickerData {
+    pub id: String,
+    #[serde(rename = "type")]
+    pub type_: String,
+}
+
+
+
+#[derive(Debug, Deserialize)]
+#[allow(dead_code)]
+pub struct Stock {
+    pub id: String,
+    #[serde(rename = "type")]
+    pub type_: String,
+    pub attributes: StockAttributes,
+}
+
+#[derive(Debug, Deserialize)]
+#[allow(dead_code)]
+pub struct StockAttributes {
+    pub name: String,
+    #[serde(rename = "companyName")]
+    pub company_name: String,
+}
+
+
+pub struct FastRunner {
+    pub is_loop_active: Arc<AtomicBool>
+}
+
+impl FastRunner {
+    pub fn new() -> Self {
+        Self {
+            is_loop_active: Arc::new(AtomicBool::new(false))
+        }
+    }
+
+    pub async fn test_http_download(&mut self) {
+        println!("test_http_download() started.");
+
+        // Load cookies from file
+        let cookies = std::fs::read_to_string("../../../rqcore_data/fast_run_1_headers.txt").expect("read_to_string() failed!");
+        
+        // Target URL
+        const URL: &str = "https://seekingalpha.com/api/v3/quant_pro_portfolio/transactions?include=ticker.slug%2Cticker.name%2Cticker.companyName&page[size]=1000&page[number]=1";
+
+        let ts = Local::now().format("%Y%m%dT%H%M%S").to_string();
+        let dir = Path::new("../../../rqcore_data");
+        let path: PathBuf = dir.join(format!("fast_run_1_src_{}.json", ts));
+
+        tokio::fs::create_dir_all(dir).await.expect("create_dir_all() failed!");
+
+        // Build client with cookies
+        let client = reqwest::Client::builder()
+            .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+            .build().expect("Client::builder() failed!");
+
+        let resp = client.get(URL)
+            .header("Cookie", cookies.trim())
+            .send()
+            .await
+            .expect("reqwest client.get() failed!");
+
+        // Get response as text first
+        let body_text = resp.text().await.expect("resp.text() failed!");
+        
+        // Save raw response
+        tokio::fs::write(&path, &body_text).await.expect("fs::write() failed!");
+        println!("Saved raw JSON response to {}", path.display());
+        
+        // Parse saved text as JSON
+        let api_response: ApiResponse = serde_json::from_str(&body_text).expect("serde_json::from_str() failed!");
+        
+        // Extract transactions list (Vec<Transaction>)
+        let transactions = api_response.data;
+        
+        // Extract stocks dictionary (HashMap<String, Stock>)
+        let mut stocks: HashMap<String, Stock> = HashMap::new();
+        for stock in api_response.included {
+            stocks.insert(stock.id.clone(), stock);
+        }
+
+        println!("Found {} transactions, {} stocks", transactions.len(), stocks.len());
+        // Print first transaction example
+        if let Some(first_tx) = transactions.first() {
+            println!("First transaction: id={}, action={}, price={:?}, tickerId={}", 
+                first_tx.attributes.id, 
+                first_tx.attributes.action, 
+                first_tx.attributes.price,
+                first_tx.relationships.ticker.data.id
+            );
+        }
+
+        // Print all transactions
+        // for transaction in &transactions {
+        //     let ticker_id = &transaction.relationships.ticker.data.id;
+        //     if let Some(stock) = stocks.get(ticker_id) {
+        //         println!(
+        //             "Tr {}: {} {} {} weight of {} ({}) at ${}",
+        //             transaction.attributes.id,
+        //             transaction.attributes.actionDate,
+        //             transaction.attributes.action,
+        //             transaction.attributes.new_weight,
+        //             stock.attributes.name,
+        //             stock.attributes.companyName,
+        //             transaction.attributes.price.as_deref().unwrap_or("N/A"),
+        //         );
+        //     }
+        // }
+
+        // Collect buys/sells for specific date
+        let target_action_date: &str = "2025-10-17"; // Friday date
+        let mut new_buy_tickers: Vec<&Stock> = Vec::new();
+        let mut new_sell_tickers: Vec<&Stock> = Vec::new();
+
+        for transaction in &transactions {
+            // Skip if not our target date
+            if transaction.attributes.action_date != target_action_date {
+                continue;
+            }
+            // Skip rebalance transactions
+            if transaction.attributes.rule.as_deref() == Some("rebalance") {
+                continue;
+            }
+            let stock = stocks.get(&transaction.relationships.ticker.data.id);
+            match transaction.attributes.action.as_str() {
+                "buy" => if let Some(stock) = stock {
+                    new_buy_tickers.push(stock);
+                },
+                "sell" => if let Some(stock) = stock {
+                    new_sell_tickers.push(stock);
+                },
+                _ => {}
+            }
+        }
+
+        // Print summary
+        println!("\nOn {}, new positions:", target_action_date);
+        println!("New BUYS ({}):", new_buy_tickers.len());
+        for stock in &new_buy_tickers {
+            println!("  {} ({})", stock.attributes.name, stock.attributes.company_name);
+        }
+        
+        println!("New SELLS ({}):", new_sell_tickers.len());
+        for stock in &new_sell_tickers {
+            println!("  {} ({})", stock.attributes.name, stock.attributes.company_name);
+        }
+    }
+
+    pub async fn get_new_buys_sells(&mut self)
+    {
+
+    }
+
+    pub async fn fastrunning_loop_impl(&mut self, _brokers_watcher: &MutexGuard<'_, brokers_watcher::BrokersWatcher> ) {
+        // The Real implementation what is running in the loop.
+        // This and test_http_download() would have a lot of duplicate code, so we can refactor the common parts.
+        // return the 2 vectors of new buys and new sells.
+        // test_http_download() calls that and prints it.
+        // fastrunning_loop_impl() calls that and uses the vectors for trading via IB API.
+
+        self.get_new_buys_sells().await;
+    }
+
+    pub async fn start_fastrunning_loop(&mut self, brokers_watcher_guard: &Arc<Mutex<brokers_watcher::BrokersWatcher>>) {
+        self.is_loop_active.store(true, Ordering::SeqCst);
+        let is_active = self.is_loop_active.clone();
+        println!("start_fastrunning_loop() started.");
+        let brokers_watcher_guard_clone = brokers_watcher_guard.clone();
+
+        thread::spawn(move || {
+            println!("FastRunner thread started");
+            let sys = System::new();
+            sys.block_on(async {
+                let mut fast_runner2 = FastRunner::new(); // fake another instance, because self cannot be used, because it will be out of scope after this function returns
+                while is_active.load(Ordering::SeqCst) {
+                    println!("Loop iteration");
+
+                    // TEMP: Use the brokers inside the loop
+                    let brokers_watcher = brokers_watcher_guard_clone.lock().unwrap();
+                    let _ib_client_dcmain = brokers_watcher.gateways[0].ib_client.as_ref().unwrap(); // 0 is dcmain, 1 is gyantal
+                    let conn_url = &(brokers_watcher.gateways[0].connection_url); // 0 is dcmain, 1 is gyantal
+                    println!("Loop iteration. connUrl={}", conn_url);
+
+                    fast_runner2.fastrunning_loop_impl(&brokers_watcher).await;
+
+                    fast_runner2.test_http_download().await;
+                    tokio::time::sleep(tokio::time::Duration::from_millis(3750)).await;
+                }
+                println!("FastRunner thread stopping");
+            });
+        });
+    }
+
+    pub async fn stop_fastrunning_loop(&mut self) {
+        self.is_loop_active.store(false, Ordering::SeqCst);
+        println!("stop_fastrunning_loop() started.");
+    }
+
+
+}

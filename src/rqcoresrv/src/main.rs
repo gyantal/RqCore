@@ -1,4 +1,5 @@
-use std::{thread, sync::Arc, path::Path};
+use std::{thread, sync::{Arc, Mutex}, path::Path};
+use std::io::{self, Write};
 use log;
 use spdlog::{prelude::*, sink::{Sink, StdStreamSink, FileSink}, formatter::{pattern, PatternFormatter}};
 use time::macros::datetime;
@@ -17,9 +18,8 @@ use rustls_pemfile;
 use rustls::{ServerConfig};
 
 mod services {
-    pub mod fast_running;
+    pub mod fast_runer;
 }
-use services::fast_running;
 
 mod broker_common {
     pub mod brokers_watcher;
@@ -210,8 +210,10 @@ fn actix_websrv_run() {
     });
 }
 
-async fn display_console_menu(brokers_watcher: &mut broker_common::brokers_watcher::BrokersWatcher) {
-    use std::io::{self, Write};
+async fn display_console_menu(brokers_watcher_guard: &Arc<Mutex<broker_common::brokers_watcher::BrokersWatcher>>) {
+    println!("display_console_menu(): start");
+
+    let mut fast_runner = services::fast_runer::FastRunner::new();
 
     loop {
         println!();
@@ -222,7 +224,9 @@ async fn display_console_menu(brokers_watcher: &mut broker_common::brokers_watch
         println!("1. Say Hello. Don't do anything. Check responsivenes.");
         println!("2. Test IbAPI: historical data");
         println!("3. Test IbAPI: trade");
-        println!("4. Test HttpDownload.");
+        println!("4. FastRunner: Test HttpDownload");
+        println!("5. FastRunner loop: Start");
+        println!("6. FastRunner loop: Stop");
         println!("9. Exit gracefully (Avoid Ctrl-^C).");
         std::io::stdout().flush().unwrap(); // Flush to ensure prompt is shown
 
@@ -237,13 +241,16 @@ async fn display_console_menu(brokers_watcher: &mut broker_common::brokers_watch
                         test_ibapi_hist_data().await;
                     }
                     "3" => {
-                        test_ibapi_trade(brokers_watcher).await;
+                        test_ibapi_trade(brokers_watcher_guard).await;
                     }
                     "4" => {
-                        match fast_running::test_http_download().await {
-                            Ok(_) => println!("Download completed successfully"),
-                            Err(e) => eprintln!("Error: {e}"),
-                        }
+                        fast_runner.test_http_download().await;
+                    }
+                    "5" => {
+                        fast_runner.start_fastrunning_loop(brokers_watcher_guard).await;
+                    }
+                    "6" => {
+                        fast_runner.stop_fastrunning_loop().await;
                     }
                     "9" => {
                         println!("Exiting gracefully...");
@@ -292,7 +299,8 @@ async fn test_ibapi_hist_data() {
     // client is dropped at the end of the scope, disconnecting from TWS (checked)
 }
 
-async fn test_ibapi_trade(brokers_watcher: &mut broker_common::brokers_watcher::BrokersWatcher) {
+async fn test_ibapi_trade(brokers_watcher_guard: &Arc<Mutex<broker_common::brokers_watcher::BrokersWatcher>>) {
+    let brokers_watcher = brokers_watcher_guard.lock().unwrap();
     let ib_client_dcmain = brokers_watcher.gateways[0].ib_client.as_ref().unwrap(); // 0 is dcmain, 1 is gyantal
 
     let contract = Contract::stock("PM").build();
@@ -325,17 +333,25 @@ async fn test_ibapi_trade(brokers_watcher: &mut broker_common::brokers_watcher::
 async fn main() -> std::io::Result<()> {
     init_log().expect("Failed to initialize logging");
     info!("***Starting RqCoreSrv...");
+    println!("main() start");
 
-    // Global static is difficult in Rust (multithreading, memory safety, ownership, Mutex, etc.)
-    // For a while, avoid global state in general. Instead, construct the object somewhere early (perhaps in main), then pass mutable references to that object into the places that need it.
-    let mut brokers_watcher = broker_common::brokers_watcher::BrokersWatcher::new();
-    brokers_watcher.init().await;
+    // TODO: use Arc<Mutex<BrokersWatcher>>
+    // This Mutex will assures that only 1 thread can access the BrokerWatcher, which is too much restriction,
+    // because 1. it can be multithreaded, or that if it contains 2 clients, those 2 clients should be accessed parallel.
+    // However, it will suffice for a while. Yes. We will need the mutex at lower level later.
+    let brokers_watcher_guard = Arc::new(Mutex::new(broker_common::brokers_watcher::BrokersWatcher::new()));
+    {
+        let mut brokers_watcher = brokers_watcher_guard.lock().unwrap();
+        brokers_watcher.init().await;
+    }
 
-    actix_websrv_run(); // Run the Actix Web server in a separate thread
+    actix_websrv_run();
+    display_console_menu(&brokers_watcher_guard).await;
 
-    display_console_menu(&mut brokers_watcher).await;
-
-    brokers_watcher.exit().await;
+    {
+        let mut brokers_watcher = brokers_watcher_guard.lock().unwrap();
+        brokers_watcher.exit().await;
+    }
     log::info!("END RqCoreSrv"); // The OS will clean up the log file handles and flush the file when the process exits
     Ok(())
 }
