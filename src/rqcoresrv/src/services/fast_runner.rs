@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use std::{thread};
 use actix_web::{rt::System};
 use std::sync::{Arc, atomic::{AtomicBool, Ordering}, Mutex, MutexGuard};
-// use std::io::{self, Write};
+use ibapi::{prelude::*};
 
 use crate::broker_common::brokers_watcher;
 
@@ -26,7 +26,7 @@ pub struct Transaction {
     pub relationships: TransactionRelationships,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 #[serde(untagged)]
 #[allow(dead_code)]
 pub enum Weight {
@@ -87,19 +87,37 @@ pub struct StockAttributes {
     pub company_name: String,
 }
 
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub struct TransactionEvent {
+    pub transaction_id: String,
+	pub action_date: String,
+	pub ticker: String, // this is StockAttributes.name
+	pub company_name: String,
+	pub starting_weight: Option<Weight>,
+	pub new_weight: String,
+	pub price: Option<String>,
+}
+
 
 pub struct FastRunner {
-    pub is_loop_active: Arc<AtomicBool>
+    pub is_loop_active: Arc<AtomicBool>,
+    pub fastrunning_loop_sleep_duration_ms: u64,
+    pub is_trading_allowed: bool,
+    pub has_trading_ever_started: bool,
 }
 
 impl FastRunner {
     pub fn new() -> Self {
         Self {
-            is_loop_active: Arc::new(AtomicBool::new(false))
+            is_loop_active: Arc::new(AtomicBool::new(false)),
+            fastrunning_loop_sleep_duration_ms: 3750, // at trading, change this to 500ms
+            is_trading_allowed: false, // at trading, change this to true. Also check if IbGateway is in ReadOnly mode.
+            has_trading_ever_started: false,
         }
     }
 
-    pub async fn get_new_buys_sells(&mut self) -> (String, Vec<Stock>, Vec<Stock>) {
+    pub async fn get_new_buys_sells(&mut self) -> (String, Vec<TransactionEvent>, Vec<TransactionEvent>) {
         println!(">* get_new_buys_sells() started.");
 
         // Load cookies from file
@@ -172,8 +190,8 @@ impl FastRunner {
         // Collect buys/sells for specific date
         // TODO: calculate target_action_date from the current date (last Friday)
         let target_action_date: &str = "2025-10-17"; // Friday date
-        let mut new_buy_tickers: Vec<Stock> = Vec::new();
-        let mut new_sell_tickers: Vec<Stock> = Vec::new();
+        let mut new_buy_events: Vec<TransactionEvent> = Vec::new();
+        let mut new_sell_events: Vec<TransactionEvent> = Vec::new();
 
         for transaction in &transactions {
             // Skip if not our target date
@@ -187,31 +205,47 @@ impl FastRunner {
             let stock = stocks.get(&transaction.relationships.ticker.data.id);
             match transaction.attributes.action.as_str() {
                 "buy" => if let Some(stock) = stock {
-                    new_buy_tickers.push(stock.clone());    // we have to clone the stock as we will return it to the caller
+                    new_buy_events.push(TransactionEvent {
+                        transaction_id: transaction.id.clone(),
+                        action_date: transaction.attributes.action_date.clone(),
+                        ticker: stock.attributes.name.clone(),
+                        company_name: stock.attributes.company_name.clone(),
+                        starting_weight: transaction.attributes.starting_weight.clone(),
+                        new_weight: transaction.attributes.new_weight.clone(),
+                        price: transaction.attributes.price.clone(),
+                    });
                 },
                 "sell" => if let Some(stock) = stock {
-                    new_sell_tickers.push(stock.clone());
+                    new_sell_events.push(TransactionEvent {
+                        transaction_id: transaction.id.clone(),
+                        action_date: transaction.attributes.action_date.clone(),
+                        ticker: stock.attributes.name.clone(),
+                        company_name: stock.attributes.company_name.clone(),
+                        starting_weight: transaction.attributes.starting_weight.clone(),
+                        new_weight: transaction.attributes.new_weight.clone(),
+                        price: transaction.attributes.price.clone(),
+                    });
                 },
                 _ => {}
             }
         }
 
-        (target_action_date.to_string(), new_buy_tickers, new_sell_tickers)
+        (target_action_date.to_string(), new_buy_events, new_sell_events)
     }
 
     pub async fn test_http_download(&mut self) {
-        let (target_action_date, new_buy_tickers, new_sell_tickers) = self.get_new_buys_sells().await;
+        let (target_action_date, new_buy_events, new_sell_events) = self.get_new_buys_sells().await;
 
         // Print summary
         println!("On {}, new positions:", target_action_date);
-        print!("New BUYS ({}):", new_buy_tickers.len());
-        for stock in &new_buy_tickers {
-            print!("  {} ({}), ", stock.attributes.name, stock.attributes.company_name);
+        print!("New BUYS ({}):", new_buy_events.len());
+        for event in &new_buy_events {
+            print!("  {} ({}, ${}) , ", event.ticker, event.company_name, event.price.as_deref().unwrap_or("N/A"));
         }
         
-        print!("\nNew SELLS ({}):", new_sell_tickers.len());
-        for stock in &new_sell_tickers {
-            print!("  {} ({}), ", stock.attributes.name, stock.attributes.company_name);
+        print!("\nNew SELLS ({}):", new_sell_events.len());
+        for event in &new_sell_events {
+            print!("  {} ({}, ${}) , ", event.ticker, event.company_name, event.price.as_deref().unwrap_or("N/A"));
         }
         println!(); // print newline for flushing the buffer. Otherwise the last line may not appear immediately.
         // io::stdout().flush().unwrap();  // Ensure immediate output, because it is annoying to wait for newline or buffer full
@@ -219,37 +253,89 @@ impl FastRunner {
 
 
     pub async fn fastrunning_loop_impl(&mut self, brokers_watcher: &MutexGuard<'_, brokers_watcher::BrokersWatcher> ) {
-        // The Real implementation what is running in the loop.
-        // This and test_http_download() would have a lot of duplicate code, so we can refactor the common parts.
-        // return the 2 vectors of new buys and new sells.
-        // test_http_download() calls that and prints it.
-        // fastrunning_loop_impl() calls that and uses the vectors for trading via IB API.
 
-        let (target_action_date, new_buy_tickers, new_sell_tickers) = self.get_new_buys_sells().await;
+        let (target_action_date, new_buy_events, new_sell_events) = self.get_new_buys_sells().await;
 
-        // TEMP: Use the brokers inside the loop
-        let _ib_client_dcmain = brokers_watcher.gateways[0].ib_client.as_ref().unwrap(); // 0 is dcmain, 1 is gyantal
-        let conn_url = &(brokers_watcher.gateways[0].connection_url); // 0 is dcmain, 1 is gyantal
+        let num_new_events = new_buy_events.len() + new_sell_events.len();
+        if num_new_events == 0 {
+            println!("No new buy/sell events on {}. Skipping trading.", target_action_date);
+            return;
+        }
+
+        // If we are here, there are events to trade. Assure that we trade only once.
+        if !self.is_trading_allowed
+            { return; }
+
+        if self.has_trading_ever_started { // Assure that Trading only happens once per FastRunner instance. To avoid trading it many times.
+            println!("Trading already started. Skipping this iteration.");
+            return;
+        }
+        self.has_trading_ever_started = true;
+
+        let ib_client = brokers_watcher.gateways[1].ib_client.as_ref().unwrap(); // 0 is dcmain, 1 is gyantal
+        let conn_url = &(brokers_watcher.gateways[1].connection_url); // 0 is dcmain, 1 is gyantal
         println!("Loop iteration. connUrl={}", conn_url);
-
+        let position_market_value = 5000.0; // Don't overdo. The most it was 5+5 = 10 trades in the past.
         println!("On {}, new positions:", target_action_date);
-        print!("New BUYS ({}):", new_buy_tickers.len());
-        for stock in &new_buy_tickers {
-            print!("  {} ({}), ", stock.attributes.name, stock.attributes.company_name);
+
+        // This will do a real trade. To prevent trade happening you have 3 options.
+        // 1. Comment out ib_client.order() (for both Buy/Sell) Just comment it back in when you want to trade.
+        // 2. Another option to prevent trade:self.is_trading_allowed bool is false by default.
+        // 3.Another option to prevent trade: is in IbGateway settings, check in "ReadOnly API", that will prevent the trades.
+
+        println!("Process New BUYS ({}):", new_buy_events.len());
+        for event in &new_buy_events {
+            println!("  {} ({}, ${}) , ", event.ticker, event.company_name, event.price.as_deref().unwrap_or("N/A"));
+
+            if event.price.is_none()
+                { continue;}
+            let price_str = event.price.as_ref().unwrap();
+            if price_str.parse::<f64>().is_err()
+                { continue;}
+            let price = price_str.parse::<f64>().unwrap();
+            let num_shares = (position_market_value / price).floor() as i32;
+            let contract = Contract::stock(&event.ticker).build();
+            println!("  {} ({}, ${}) , ", event.ticker, event.company_name, event.price.as_deref().unwrap_or("N/A"));
+
+            let order_id = ib_client.order(&contract)
+                .buy(num_shares)
+                .market()
+                .submit()
+                .await
+                .expect("order submission failed!");
+            println!("Order submitted: OrderID: {}, Ticker: {}, Shares: {}", order_id, contract.symbol, num_shares);
         }
         
-        print!("\nNew SELLS ({}):", new_sell_tickers.len());
-        for stock in &new_sell_tickers {
-            print!("  {} ({}), ", stock.attributes.name, stock.attributes.company_name);
+        println!("Process New SELLS ({}):", new_sell_events.len());
+        for event in &new_sell_events {
+            println!("  {} ({}, ${}) , ", event.ticker, event.company_name, event.price.as_deref().unwrap_or("N/A"));
+
+            if event.price.is_none()
+                { continue;}
+            let price_str = event.price.as_ref().unwrap();
+            if price_str.parse::<f64>().is_err()
+                { continue;}
+            let price = price_str.parse::<f64>().unwrap();
+            let num_shares = (position_market_value / price).floor() as i32;
+            let contract = Contract::stock(&event.ticker).build();
+            println!("  {} ({}, ${}) , ", event.ticker, event.company_name, event.price.as_deref().unwrap_or("N/A"));
+
+            let order_id = ib_client.order(&contract)
+                .sell(num_shares)
+                .market()
+                .submit()
+                .await
+                .expect("order submission failed!");
+            println!("Order submitted: OrderID: {}, Ticker: {}, Shares: {}", order_id, contract.symbol, num_shares);
         }
         println!(); // print newline for flushing the buffer. Otherwise the last line may not appear immediately.
         // io::stdout().flush().unwrap();  // Ensure immediate output, because it is annoying to wait for newline or buffer full
     }
 
     pub async fn start_fastrunning_loop(&mut self, brokers_watcher_guard: &Arc<Mutex<brokers_watcher::BrokersWatcher>>) {
+        println!("start_fastrunning_loop() started.");
         self.is_loop_active.store(true, Ordering::SeqCst);
         let is_loop_active_clone = self.is_loop_active.clone(); // Clone the Arc, not the AtomicBool
-        println!("start_fastrunning_loop() started.");
         let brokers_watcher_guard_clone = brokers_watcher_guard.clone(); // Clone the Arc, not BrokersWatcher
 
         // tried to use tokio::spawn or actix_web::rt::spawn to start a task on the ThreadPool, but had problems that they were not called, because
@@ -269,7 +355,12 @@ impl FastRunner {
 
                     fast_runner2.fastrunning_loop_impl(&brokers_watcher).await;
 
-                    tokio::time::sleep(tokio::time::Duration::from_millis(3750)).await;
+                    if fast_runner2.has_trading_ever_started {
+                        println!("Trading has started, exiting the loop.");
+                        break;
+                    }
+
+                    tokio::time::sleep(tokio::time::Duration::from_millis(fast_runner2.fastrunning_loop_sleep_duration_ms)).await;
                 }
                 println!("FastRunner thread stopping");
             });
@@ -277,8 +368,8 @@ impl FastRunner {
     }
 
     pub async fn stop_fastrunning_loop(&mut self) {
-        self.is_loop_active.store(false, Ordering::SeqCst);
         println!("stop_fastrunning_loop() started.");
+        self.is_loop_active.store(false, Ordering::SeqCst);
     }
 
 
