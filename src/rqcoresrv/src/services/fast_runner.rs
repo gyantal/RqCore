@@ -7,6 +7,8 @@ use chrono::{Local, Utc};
 use chrono::Datelike;
 use serde::Deserialize;
 use ibapi::{prelude::*};
+use std::fs;
+use std::time::SystemTime;
 
 use crate::broker_common::brokers_watcher;
 
@@ -108,6 +110,8 @@ pub struct FastRunner {
     pub loop_sleep_ms_realtrading: u64,
     pub is_loop_active: Arc<AtomicBool>,
     pub has_trading_ever_started: bool,
+    pub cookies: Option<String>,
+    pub cookies_file_last_modtime: Option<SystemTime>,
 }
 
 impl FastRunner {
@@ -122,6 +126,25 @@ impl FastRunner {
             loop_sleep_ms_realtrading: 500, // usually 500ms
             is_loop_active: Arc::new(AtomicBool::new(false)),
             has_trading_ever_started: false,
+            // initialize cookies cache
+            cookies: None,
+            cookies_file_last_modtime: None,
+        }
+    }
+
+    const COOKIES_FILE_PATH: &'static str = "../../../rqcore_data/fast_run_1_headers.txt";
+    fn ensure_cookies_loaded(&mut self) {
+        let file_metadata = fs::metadata(Self::COOKIES_FILE_PATH).expect("metadata() failed for cookies file");
+        let file_modified_time = file_metadata.modified().expect("modified() failed for cookies file");
+
+        let need_reload = self.cookies.is_none()
+            || self.cookies_file_last_modtime.map(|t| t != file_modified_time).unwrap_or(true);
+
+        if need_reload {
+            let content = fs::read_to_string(Self::COOKIES_FILE_PATH).expect("read_to_string() failed!");
+            self.cookies = Some(content.trim().to_string());
+            self.cookies_file_last_modtime = Some(file_modified_time);
+            println!("Cookies loaded/refreshed from file.");
         }
     }
 
@@ -133,20 +156,19 @@ impl FastRunner {
         let days_to_subtract = current_date.weekday().num_days_from_monday() as i64;
         let target_action_date_naive = current_date - chrono::Duration::days(days_to_subtract);
         let target_action_date = target_action_date_naive.format("%Y-%m-%d").to_string();
-        // let target_action_date = "2025-10-17".to_string(); // Monday date
+        // target_action_date = "2025-10-17".to_string(); // Monday date
 
-        // Load cookies from file
-        let cookies = std::fs::read_to_string("../../../rqcore_data/fast_run_1_headers.txt").expect("read_to_string() failed!");
-        
+        self.ensure_cookies_loaded(); // cookies are reloaded from file only if needed, if the file changed.
+
         const URL: &str = "https://seekingalpha.com/api/v3/quant_pro_portfolio/transactions?include=ticker.slug%2Cticker.name%2Cticker.companyName&page[size]=1000&page[number]=1";
 
-        // Prepare file path with timestamp        // Build client with cookies
+        // Build client with cookies
         let client = reqwest::Client::builder()
             .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
             .build().expect("Client::builder() failed!");
 
         let resp = client.get(URL)
-            .header("Cookie", cookies.trim())
+            .header("Cookie", self.cookies.as_deref().expect("cookies not initialized"))
             .send()
             .await
             .expect("reqwest client.get() failed!");
@@ -154,9 +176,14 @@ impl FastRunner {
         // Get response as text first
         let body_text = resp.text().await.expect("resp.text() failed!");
         
-        if body_text.len() < 1000 && body_text.contains("Subscription is required") {
-            println!("No permission, Update cookie file."); // we don't have to terminate the infinite Loop. The admin can update the cookie file and the next iteration will notice it.
-            return (target_action_date.to_string(), Vec::new(), Vec::new());
+        if body_text.len() < 1000 {
+            if body_text.contains("Subscription is required") {
+                println!("No permission, Update cookie file."); // we don't have to terminate the infinite Loop. The admin can update the cookie file and the next iteration will notice it.
+                return (target_action_date.to_string(), Vec::new(), Vec::new());
+            } else if body_text.contains("captcha.js") {
+                println!("Captcha required, Update cookie file AND handle Captcha in browser."); // we don't have to terminate the infinite Loop. The admin can update the cookie file and the next iteration will notice it.
+                return (target_action_date.to_string(), Vec::new(), Vec::new());
+            }
         }
         
         // Save raw response
@@ -335,7 +362,8 @@ impl FastRunner {
                 { continue;}
             let order_id = ib_client.order(&contract)
                 .buy(num_shares)
-                .market()
+                // .market()
+                .limit(price * 1.20) // Limit buy order at 20% above the last day close price
                 .submit()
                 .await
                 .expect("order submission failed!");
@@ -360,7 +388,8 @@ impl FastRunner {
                 { continue;}
             let order_id = ib_client.order(&contract)
                 .sell(num_shares)
-                .market()
+                //.market()
+                .limit(price * 0.85) // Limit sell order at -15% below the last day close price
                 .submit()
                 .await
                 .expect("order submission failed!");

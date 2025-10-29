@@ -1,5 +1,6 @@
 use std::{thread, sync::{Arc, Mutex}, path::Path};
 use std::io::{self, Write};
+use std::env;
 use log;
 use spdlog::{prelude::*, sink::{Sink, StdStreamSink, FileSink}, formatter::{pattern, PatternFormatter}};
 use time::macros::datetime;
@@ -25,10 +26,31 @@ mod broker_common {
     pub mod brokers_watcher;
 }
 
-#[cfg(target_os = "windows")]
-const CERT_BASE_PATH: &str = r"h:\.shortcut-targets-by-id\0BzxkV1ug5ZxvVmtic1FsNTM5bHM\GDriveHedgeQuant\shared\GitHubRepos\NonCommitedSensitiveData\cert\RqCore\https_certs"; // gyantal-PC
-#[cfg(target_os = "linux")]
-const CERT_BASE_PATH: &str = "/home/rquser/RQ/sensitive_data/https_certs";
+
+pub fn sensitive_config_folder_path() -> String {
+    let os = env::consts::OS;
+    let username = if os == "windows" {
+        env::var("USERNAME").expect("Failed to get USERNAME environment variable")
+    } else {
+        env::var("USER").expect("Failed to get USER environment variable")
+    };
+
+    match os { // pattern is RQ + sensitive_data on Linux, and sensitive_data + RqCore on Windows
+        "linux" | "macos" => format!("/home/{}/RQ/sensitive_data/", username), // e.g. "/home/rquser/RQ/sensitive_data/https_certs";
+        "windows" => match username.as_str() {
+            "gyantal" => "h:/.shortcut-targets-by-id/0BzxkV1ug5ZxvVmtic1FsNTM5bHM/GDriveHedgeQuant/shared/GitHubRepos/NonCommitedSensitiveData/RqCore/".to_string(),
+            "gyant" => "h:/.shortcut-targets-by-id/0BzxkV1ug5ZxvVmtic1FsNTM5bHM/GDriveHedgeQuant/shared/GitHubRepos/NonCommitedSensitiveData/RqCore/".to_string(),
+            "Balazs" => "h:/.shortcut-targets-by-id/0BzxkV1ug5ZxvVmtic1FsNTM5bHM/GDriveHedgeQuant/shared/GitHubRepos/NonCommitedSensitiveData/RqCore/".to_string(),
+            "Lukucz Balázs" => "g:/.shortcut-targets-by-id/0BzxkV1ug5ZxvVmtic1FsNTM5bHM/GDriveHedgeQuant/shared/GitHubRepos/NonCommitedSensitiveData/RqCore/".to_string(),
+            "Laci" => "d:/ArchiData/GoogleDrive/GDriveHedgeQuant/shared/GitHubRepos/NonCommitedSensitiveData/RqCore/".to_string(),
+            "vinci" => "g:/.shortcut-targets-by-id/0BzxkV1ug5ZxvVmtic1FsNTM5bHM/GDriveHedgeQuant/shared/GitHubRepos/NonCommitedSensitiveData/RqCore/".to_string(),
+            "Gigabyte" => "g:/.shortcut-targets-by-id/0BzxkV1ug5ZxvVmtic1FsNTM5bHM/GDriveHedgeQuant/shared/GitHubRepos/NonCommitedSensitiveData/RqCore/".to_string(),
+            "drcharmat" => "c:/Agy/NonCommitedSensitiveData/RqCore/".to_string(),
+            _ => panic!("Windows user name is not recognized. Add your username and folder here!"),
+        },
+        _ => panic!("Running platform is not recognized"),
+    }
+}
 
 // SNI (Server Name Indication): the hostname sent by the client. Used for selecting HTTPS cert.
 struct SniWithDefaultFallbackResolver {
@@ -137,19 +159,22 @@ fn actix_websrv_run() {
                 rustls_pemfile::private_key(&mut reader).expect(&format!("invalid private key in file {}", filename)).expect(&format!("no private key found in {}", filename))
             }
 
-            let rq_certs = load_certs(&format!("{}/rqcore.com/fullchain.pem", CERT_BASE_PATH));
-            let rq_key = load_private_key(&format!("{}/rqcore.com/privkey.pem", CERT_BASE_PATH));
+            let sensitive_config_folder_path = sensitive_config_folder_path();
+            let cert_base_path = format!("{}https_certs/", sensitive_config_folder_path);
+
+            let rq_certs = load_certs(&format!("{}rqcore.com/fullchain.pem", cert_base_path));
+            let rq_key = load_private_key(&format!("{}rqcore.com/privkey.pem", cert_base_path));
             let rq_signing_key = any_supported_type(&rq_key).expect("unsupported rqcore private key type");
             let rq_certified_key = CertifiedKey::new(rq_certs, rq_signing_key);
 
-            let theta_certs = load_certs(&format!("{}/thetaconite.com/fullchain.pem", CERT_BASE_PATH));
-            let theta_key = load_private_key(&format!("{}/thetaconite.com/privkey.pem", CERT_BASE_PATH));
+            let theta_certs = load_certs(&format!("{}thetaconite.com/fullchain.pem", cert_base_path));
+            let theta_key = load_private_key(&format!("{}thetaconite.com/privkey.pem", cert_base_path));
             let theta_signing_key = any_supported_type(&theta_key).expect("unsupported thetaconite private key type");
             let theta_certified_key = CertifiedKey::new(theta_certs, theta_signing_key);
 
             // Default cert for 'localhost' and IP. Created as: openssl req -x509 -nodes -days 3650 -newkey rsa:2048 -keyout privkey.pem -out fullchain.pem -subj "/CN=localhost" -addext "subjectAltName=DNS:localhost,DNS:127.0.0.1"
-            let default_certs = load_certs(&format!("{}/localhost/fullchain.pem", CERT_BASE_PATH));
-            let default_key = load_private_key(&format!("{}/localhost/privkey.pem", CERT_BASE_PATH));
+            let default_certs = load_certs(&format!("{}localhost/fullchain.pem", cert_base_path));
+            let default_key = load_private_key(&format!("{}localhost/privkey.pem", cert_base_path));
             let default_signing_key = any_supported_type(&default_key).expect("unsupported default key");
             let default_certified_key = CertifiedKey::new(default_certs, default_signing_key);
 
