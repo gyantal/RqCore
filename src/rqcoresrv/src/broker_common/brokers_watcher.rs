@@ -53,7 +53,7 @@ pub struct BrokersWatcher {
     // This Mutex will assures that only 1 thread can access the BrokerWatcher, which is too much restriction,
     // because 1. it can be multithreaded, or that if it contains 2 clients, those 2 clients should be accessed parallel.
     // However, it will suffice for a while. Yes. We will need the mutex at lower level later.
-    pub gateways: Mutex<Vec<Arc<Gateway>>>,
+    pub gateways: Mutex<Vec<Arc<Mutex<Gateway>>>>,
 }
 
 impl BrokersWatcher {
@@ -74,16 +74,22 @@ impl BrokersWatcher {
         let mut gateway0 = Gateway::new(connection_url_dcmain, client_id);
         gateway0.init().await;
         let mut gateways = self.gateways.lock().unwrap();
-        gateways.push(Arc::new(gateway0));
+        gateways.push(Arc::new(Mutex::new(gateway0)));
 
         let connection_url_gyantal = "34.251.1.119:7301";
         let mut gateway1 = Gateway::new(connection_url_gyantal, client_id);
         gateway1.init().await;
-        gateways.push(Arc::new(gateway1));
+        gateways.push(Arc::new(Mutex::new(gateway1)));
         
     }
 
     pub async fn exit(&self) {
+        let mut gateways = self.gateways.lock().unwrap();
+        for gateway in gateways.iter() {
+            gateway.lock().unwrap().exit().await;
+        }
+        gateways.clear();
+        
         // for gateway in &mut self.gateways {
         //     gateway.exit().await;
         // }

@@ -119,26 +119,26 @@ impl RqTask for FastRunnerTask {
         let utc_now = Utc::now().date_naive();
         if utc_now.weekday() == chrono::Weekday::Mon { // Only run on Mondays
             println!("FastRunnerTask is triggering FastRunner loop");
-            let mut fast_runner = FastRunner::new();
-            // fast_runner.start_fastrunning_loop(brokers_watcher_guard).await;
+            // let mut fast_runner = FastRunner::new();
+            // fast_runner.start_fastrunning_loop().await;
             
         }
         // TODO: 1. Async problem. 2. is_simulation = true/false 3. Loop should close after 4 minutes
 
         let mut fast_runner2 = FastRunner::new(); // fake another instance, because self cannot be used, because it will be out of scope after this function returns
         fast_runner2.is_simulation = true; // set this based on when it was triggered
-        loop {
-            println!(">* Loop iteration");
+        // loop {
+        //     println!(">* Loop iteration");
 
-            // fast_runner2.fastrunning_loop_impl().await;
+        //     fast_runner2.fastrunning_loop_impl().await;
 
-            if fast_runner2.has_trading_ever_started {
-                println!("Trading has started, exiting the loop.");
-                break;
-            }
+        //     if fast_runner2.has_trading_ever_started {
+        //         println!("Trading has started, exiting the loop.");
+        //         break;
+        //     }
 
-            tokio::time::sleep(tokio::time::Duration::from_millis(if fast_runner2.is_simulation { fast_runner2.loop_sleep_ms_simulation } else { fast_runner2.loop_sleep_ms_realtrading })).await;
-        }
+        //     tokio::time::sleep(tokio::time::Duration::from_millis(if fast_runner2.is_simulation { fast_runner2.loop_sleep_ms_simulation } else { fast_runner2.loop_sleep_ms_realtrading })).await;
+        // }
 
         let next_utc = Self::get_next_trigger_time_utc();
         let mut next = self.next_time.lock().unwrap();

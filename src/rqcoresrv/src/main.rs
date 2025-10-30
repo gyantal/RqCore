@@ -1,4 +1,4 @@
-use std::{thread, sync::{Arc, Mutex}, path::Path};
+use std::{thread, sync::{Arc}, path::Path};
 use std::io::{self, Write};
 use std::env;
 use log;
@@ -328,7 +328,8 @@ async fn test_ibapi_hist_data() {
 
 async fn test_ibapi_trade() {
     let gateways = RQ_BROKERS_WATCHER.gateways.lock().unwrap();
-    let ib_client_dcmain = gateways[0].ib_client.as_ref().unwrap(); // 0 is dcmain, 1 is gyantal
+    let ib_client_guard = gateways[0].lock().unwrap();  // 0 is dcmain, 1 is gyantal
+    let ib_client_dcmain = ib_client_guard.ib_client.as_ref().unwrap();
 
     let contract = Contract::stock("PM").build();
 

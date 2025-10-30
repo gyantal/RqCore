@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf} ;
 use std::collections::HashMap;
 use std::{thread};
-use std::sync::{Arc, atomic::{AtomicBool, Ordering}, Mutex, MutexGuard};
+use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
 use actix_web::{rt::System};
 use chrono::{Local, Utc};
 use chrono::Datelike;
@@ -366,7 +366,8 @@ impl FastRunner {
         self.determine_position_market_values_gyantal(&mut new_buy_events, &mut new_sell_events); // replace it to blukucz if needed
 
         let gateways = RQ_BROKERS_WATCHER.gateways.lock().unwrap();
-        let ib_client = gateways[1].ib_client.as_ref().unwrap(); // 0 is dcmain, 1 is gyantal
+        let ib_client_guard = gateways[1].lock().unwrap();  // 0 is dcmain, 1 is gyantal
+        let ib_client = ib_client_guard.ib_client.as_ref().unwrap();
 
         // This will do a real trade. To prevent trade happening you have 3 options.
         // 1. Comment out ib_client.order() (for both Buy/Sell) Just comment it back in when you want to trade.
