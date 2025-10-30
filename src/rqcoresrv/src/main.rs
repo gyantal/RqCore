@@ -18,14 +18,18 @@ use std::fmt;
 use rustls_pemfile;
 use rustls::{ServerConfig};
 
+use crate::broker_common::brokers_watcher::RQ_BROKERS_WATCHER;
+use crate::services::rqtask_scheduler::{FastRunnerTask, RQ_TASK_SCHEDULER};
+use crate::services::rqtask_scheduler::HeartbeatTask;
+
 mod services {
+    pub mod rqtask_scheduler;
     pub mod fast_runner;
 }
 
 mod broker_common {
     pub mod brokers_watcher;
 }
-
 
 pub fn sensitive_config_folder_path() -> String {
     if env::consts::OS == "windows" { // On windows, use USERDOMAIN, instead of USERNAME, because USERNAME can be the same on multiple machines (e.g. "gyantal" on both GYANTAL-PC and GYANTAL-LAPTOP)
@@ -229,7 +233,7 @@ fn actix_websrv_run() {
     });
 }
 
-async fn display_console_menu(brokers_watcher_guard: &Arc<Mutex<broker_common::brokers_watcher::BrokersWatcher>>) {
+async fn display_console_menu() {
     println!("display_console_menu(): start");
 
     let mut fast_runner = services::fast_runner::FastRunner::new();
@@ -246,6 +250,7 @@ async fn display_console_menu(brokers_watcher_guard: &Arc<Mutex<broker_common::b
         println!("4. FastRunner: Test HttpDownload");
         println!("5. FastRunner loop: Start");
         println!("6. FastRunner loop: Stop");
+        println!("8. TaskScheduler: Show next trigger times.");
         println!("9. Exit gracefully (Avoid Ctrl-^C).");
         std::io::stdout().flush().unwrap(); // Flush to ensure prompt is shown
 
@@ -260,16 +265,19 @@ async fn display_console_menu(brokers_watcher_guard: &Arc<Mutex<broker_common::b
                         test_ibapi_hist_data().await;
                     }
                     "3" => {
-                        test_ibapi_trade(brokers_watcher_guard).await;
+                        test_ibapi_trade().await;
                     }
                     "4" => {
                         fast_runner.test_http_download().await;
                     }
                     "5" => {
-                        fast_runner.start_fastrunning_loop(brokers_watcher_guard).await;
+                        fast_runner.start_fastrunning_loop().await;
                     }
                     "6" => {
                         fast_runner.stop_fastrunning_loop().await;
+                    }
+                    "8" => {
+                        RQ_TASK_SCHEDULER.print_next_trigger_times();
                     }
                     "9" => {
                         println!("Exiting gracefully...");
@@ -318,9 +326,9 @@ async fn test_ibapi_hist_data() {
     // client is dropped at the end of the scope, disconnecting from TWS (checked)
 }
 
-async fn test_ibapi_trade(brokers_watcher_guard: &Arc<Mutex<broker_common::brokers_watcher::BrokersWatcher>>) {
-    let brokers_watcher = brokers_watcher_guard.lock().unwrap();
-    let ib_client_dcmain = brokers_watcher.gateways[0].ib_client.as_ref().unwrap(); // 0 is dcmain, 1 is gyantal
+async fn test_ibapi_trade() {
+    let gateways = RQ_BROKERS_WATCHER.gateways.lock().unwrap();
+    let ib_client_dcmain = gateways[0].ib_client.as_ref().unwrap(); // 0 is dcmain, 1 is gyantal
 
     let contract = Contract::stock("PM").build();
 
@@ -354,23 +362,16 @@ async fn main() -> std::io::Result<()> {
     info!("***Starting RqCoreSrv...");
     println!("main() start");
 
-    // TODO: use Arc<Mutex<BrokersWatcher>>
-    // This Mutex will assures that only 1 thread can access the BrokerWatcher, which is too much restriction,
-    // because 1. it can be multithreaded, or that if it contains 2 clients, those 2 clients should be accessed parallel.
-    // However, it will suffice for a while. Yes. We will need the mutex at lower level later.
-    let brokers_watcher_guard = Arc::new(Mutex::new(broker_common::brokers_watcher::BrokersWatcher::new()));
-    {
-        let mut brokers_watcher = brokers_watcher_guard.lock().unwrap();
-        brokers_watcher.init().await;
-    }
+    RQ_BROKERS_WATCHER.init().await;
+
+    RQ_TASK_SCHEDULER.schedule_task(Arc::new(HeartbeatTask::new()));
+    RQ_TASK_SCHEDULER.schedule_task(Arc::new(FastRunnerTask::new()));
+    RQ_TASK_SCHEDULER.start();
 
     actix_websrv_run();
-    display_console_menu(&brokers_watcher_guard).await;
+    display_console_menu().await;
 
-    {
-        let mut brokers_watcher = brokers_watcher_guard.lock().unwrap();
-        brokers_watcher.exit().await;
-    }
+    RQ_BROKERS_WATCHER.exit().await;
     log::info!("END RqCoreSrv"); // The OS will clean up the log file handles and flush the file when the process exits
     Ok(())
 }

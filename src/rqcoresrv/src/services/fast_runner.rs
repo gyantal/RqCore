@@ -11,7 +11,7 @@ use std::fs;
 use std::time::SystemTime;
 use std::future::Future;
 
-use crate::broker_common::brokers_watcher;
+use crate::RQ_BROKERS_WATCHER;
 
 use std::time::Instant;
 
@@ -342,7 +342,7 @@ impl FastRunner {
     }
 
 
-    pub async fn fastrunning_loop_impl(&mut self, brokers_watcher: &MutexGuard<'_, brokers_watcher::BrokersWatcher> ) {
+    pub async fn fastrunning_loop_impl(&mut self) {
 
         let (target_action_date, mut new_buy_events, mut new_sell_events) = self.get_new_buys_sells().await;
 
@@ -365,7 +365,8 @@ impl FastRunner {
 
         self.determine_position_market_values_gyantal(&mut new_buy_events, &mut new_sell_events); // replace it to blukucz if needed
 
-        let ib_client = brokers_watcher.gateways[1].ib_client.as_ref().unwrap(); // 0 is dcmain, 1 is gyantal
+        let gateways = RQ_BROKERS_WATCHER.gateways.lock().unwrap();
+        let ib_client = gateways[1].ib_client.as_ref().unwrap(); // 0 is dcmain, 1 is gyantal
 
         // This will do a real trade. To prevent trade happening you have 3 options.
         // 1. Comment out ib_client.order() (for both Buy/Sell) Just comment it back in when you want to trade.
@@ -427,11 +428,10 @@ impl FastRunner {
         // io::stdout().flush().unwrap();  // Ensure immediate output, because it is annoying to wait for newline or buffer full
     }
 
-    pub async fn start_fastrunning_loop(&mut self, brokers_watcher_guard: &Arc<Mutex<brokers_watcher::BrokersWatcher>>) {
+    pub async fn start_fastrunning_loop(&mut self) {
         println!("start_fastrunning_loop() started.");
         self.is_loop_active.store(true, Ordering::SeqCst);
         let is_loop_active_clone = self.is_loop_active.clone(); // Clone the Arc, not the AtomicBool
-        let brokers_watcher_guard_clone = brokers_watcher_guard.clone(); // Clone the Arc, not BrokersWatcher
 
         // tried to use tokio::spawn or actix_web::rt::spawn to start a task on the ThreadPool, but had problems that they were not called, because
         // the current thread is the ConsoleMenu main thread, and I never return from this thread. It should have worked though.
@@ -441,14 +441,12 @@ impl FastRunner {
             println!("FastRunner thread started");
             let sys = System::new(); // actix_web::rt::System to be able to use async in this new OS thread
             sys.block_on(async {
-                // TODO: this will lock the brokers_watcher for the whole loop duration, which efficient, but it is bad, because other parts of the program cannot access it while this loop is running.
-                let brokers_watcher = brokers_watcher_guard_clone.lock().unwrap();
                 let mut fast_runner2 = FastRunner::new(); // fake another instance, because self cannot be used, because it will be out of scope after this function returns
 
                 while is_loop_active_clone.load(Ordering::SeqCst) {
                     println!(">* Loop iteration");
 
-                    fast_runner2.fastrunning_loop_impl(&brokers_watcher).await;
+                    fast_runner2.fastrunning_loop_impl().await;
 
                     if fast_runner2.has_trading_ever_started {
                         println!("Trading has started, exiting the loop.");

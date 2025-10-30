@@ -1,6 +1,11 @@
-// TEMP: implement inside the rqcoresrv project now, but it will go to its own crate later in the /common folder
+use std::sync::{Arc, LazyLock, Mutex};
+
+// TODO: implement inside the rqcoresrv project now, but it will go to its own crate later in the /common folder
 
 use ibapi::Client;
+
+// ---------- Global ----------
+pub static RQ_BROKERS_WATCHER: LazyLock<BrokersWatcher> = LazyLock::new(|| BrokersWatcher::new());
 
 pub struct Gateway {
     pub connection_url: String,
@@ -44,7 +49,11 @@ impl Gateway {
 }
 
 pub struct BrokersWatcher {
-    pub gateways: Vec<Gateway>,
+    // TODO: use Arc<Mutex<BrokersWatcher>>
+    // This Mutex will assures that only 1 thread can access the BrokerWatcher, which is too much restriction,
+    // because 1. it can be multithreaded, or that if it contains 2 clients, those 2 clients should be accessed parallel.
+    // However, it will suffice for a while. Yes. We will need the mutex at lower level later.
+    pub gateways: Mutex<Vec<Arc<Gateway>>>,
 }
 
 impl BrokersWatcher {
@@ -54,31 +63,30 @@ impl BrokersWatcher {
     const GATEWAY_CLIENT_ID: i32 = 200;
 
     pub fn new() -> Self {
-        Self {
-            gateways: Vec::new(),
-        }
+        BrokersWatcher { gateways: Mutex::new(Vec::new()) }
     }
 
-    pub async fn init(&mut self) {
+    pub async fn init(&self) {
         println!("BrokersWatcher.init() start");
         // Initialize all gateways with their default configurations
         let connection_url_dcmain = "34.251.1.119:7303"; // port info is fine here. OK. Temporary anyway, and login is impossible, because there are 2 firewalls with source-IP check: AwsVm, IbTWS
         let client_id = Self::GATEWAY_CLIENT_ID;
         let mut gateway0 = Gateway::new(connection_url_dcmain, client_id);
         gateway0.init().await;
-        self.gateways.push(gateway0);
+        let mut gateways = self.gateways.lock().unwrap();
+        gateways.push(Arc::new(gateway0));
 
         let connection_url_gyantal = "34.251.1.119:7301";
         let mut gateway1 = Gateway::new(connection_url_gyantal, client_id);
         gateway1.init().await;
-        self.gateways.push(gateway1);
+        gateways.push(Arc::new(gateway1));
         
     }
 
-    pub async fn exit(&mut self) {
-        for gateway in &mut self.gateways {
-            gateway.exit().await;
-        }
-        self.gateways.clear();
+    pub async fn exit(&self) {
+        // for gateway in &mut self.gateways {
+        //     gateway.exit().await;
+        // }
+        // self.gateways.clear();
     }
 }
