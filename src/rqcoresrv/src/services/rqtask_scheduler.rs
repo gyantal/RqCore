@@ -1,8 +1,11 @@
 use chrono::{DateTime, Datelike, Duration, NaiveTime, TimeZone, Utc};
 use chrono_tz::{Tz, US::Eastern};
 use std::sync::{Arc, LazyLock, Mutex};
+use actix_web::{rt::System};
+use tokio::time as tokio_time;
+use std::future::Future;
+use std::pin::Pin;
 use std::thread;
-use std::time;
 
 use crate::services::fast_runner::FastRunner;
 
@@ -29,7 +32,7 @@ fn next_daily_time_utc(tz: Tz, target_time: NaiveTime) -> DateTime<Utc> {
 pub trait RqTask: Send + Sync {
     fn name(&self) -> &str;
     fn get_next_trigger_time(&self) -> DateTime<Utc>;
-    fn run(&self);
+    fn run(&self) -> Pin<Box<dyn Future<Output = ()> + Send + '_>>;
 }
 
 // ---------- Heartbeat ----------
@@ -56,10 +59,13 @@ impl RqTask for HeartbeatTask {
         *self.next_time.lock().unwrap()
     }
 
-    fn run(&self) {
-        println!("HeartbeatTask run has started");
-        let mut next = self.next_time.lock().unwrap();
-        *next = Utc::now() + self.interval;
+    fn run(&self) -> Pin<Box<dyn Future<Output = ()> + Send + '_>> {
+        let this = self;
+        Box::pin(async move {
+            println!("HeartbeatTask run has started");
+            let mut next = this.next_time.lock().unwrap();
+            *next = Utc::now() + this.interval;
+        })
     }
 }
 
@@ -78,24 +84,18 @@ impl FastRunnerTask {
         }
     }
 
-    // fn get_next_trigger_time_utc() -> DateTime<Utc> {
-    //     let target_time = NaiveTime::from_hms_opt(11, 59, 10).unwrap();
-    //     let next_utc = next_daily_time_utc(Eastern, target_time);
-    //     next_utc
-    // }
-
     fn get_next_trigger_time_utc() -> DateTime<Utc> { // we run 3 times daily: 2x Simulation, 1x RealTrading at 11:01 ET, 11:30 ET, 11:59 ET
         let tz = Eastern;
-        // let targets = [
-        //     NaiveTime::from_hms_opt(11, 1, 10).unwrap(),
-        //     NaiveTime::from_hms_opt(11, 30, 10).unwrap(),
-        //     NaiveTime::from_hms_opt(11, 59, 10).unwrap(),
-        // ];
         let targets = [
-            NaiveTime::from_hms_opt(12, 47, 10).unwrap(),
-            NaiveTime::from_hms_opt(12, 48, 10).unwrap(),
-            NaiveTime::from_hms_opt(12, 49, 10).unwrap(),
+            NaiveTime::from_hms_opt(11, 1, 10).unwrap(),
+            NaiveTime::from_hms_opt(11, 30, 10).unwrap(),
+            NaiveTime::from_hms_opt(11, 59, 10).unwrap(),
         ];
+        // let targets = [
+        //     NaiveTime::from_hms_opt(19, 03, 10).unwrap(),
+        //     NaiveTime::from_hms_opt(19, 55, 10).unwrap(),
+        //     NaiveTime::from_hms_opt(19, 59, 10).unwrap(),
+        // ];
 
         targets
             .into_iter()
@@ -114,35 +114,43 @@ impl RqTask for FastRunnerTask {
         *self.next_time.lock().unwrap()
     }
 
-    fn run(&self) {
-        println!("FastRunnerTask run has started");
-        let utc_now = Utc::now().date_naive();
-        if utc_now.weekday() == chrono::Weekday::Mon { // Only run on Mondays
-            println!("FastRunnerTask is triggering FastRunner loop");
-            // let mut fast_runner = FastRunner::new();
-            // fast_runner.start_fastrunning_loop().await;
-            
-        }
-        // TODO: 1. Async problem. 2. is_simulation = true/false 3. Loop should close after 4 minutes
+    fn run(&self) -> Pin<Box<dyn Future<Output = ()> + Send + '_>> {
+        let this = self;
+        Box::pin(async move {
+            println!("FastRunnerTask run() started");
+            let utc_now = Utc::now().date_naive();
+            // if utc_now.weekday() == chrono::Weekday::Thu {
+            if utc_now.weekday() == chrono::Weekday::Mon {
+                println!("FastRunnerTask run() starts the loop");
+                let tz_et = Eastern;
+                let now_et = Utc::now().with_timezone(&tz_et);
+                let target_naive = now_et.date_naive().and_time(NaiveTime::from_hms_opt(12, 0, 0).unwrap());
+                let target_et = tz_et.from_local_datetime(&target_naive).earliest().unwrap();
+                let is_live_trading = (now_et - target_et).num_seconds().abs() < 55; // If current time from 12:00 ET is less than 55 seconds, then set it to true.
 
-        let mut fast_runner2 = FastRunner::new(); // fake another instance, because self cannot be used, because it will be out of scope after this function returns
-        fast_runner2.is_simulation = true; // set this based on when it was triggered
-        // loop {
-        //     println!(">* Loop iteration");
+                let mut fast_runner = FastRunner::new();
+                fast_runner.is_simulation = !is_live_trading;
+                // fast_runner.start_fastrunning_loop().await; // don't call this, because that will create a new Fastrunner instance and start its own loop
+                
+                let deadline = tokio::time::Instant::now() + tokio::time::Duration::from_secs(4 * 60 + 30);
+                while tokio::time::Instant::now() < deadline { // if the loop runs more than 4 minutes 30 seconds, then finish the loop
+                    println!(">* FastRunnerTask run(): Loop iteration");
 
-        //     fast_runner2.fastrunning_loop_impl().await;
+                    fast_runner.fastrunning_loop_impl().await;
 
-        //     if fast_runner2.has_trading_ever_started {
-        //         println!("Trading has started, exiting the loop.");
-        //         break;
-        //     }
+                    if fast_runner.has_trading_ever_started {
+                        println!("Trading has started, exiting the loop.");
+                        break;
+                    }
 
-        //     tokio::time::sleep(tokio::time::Duration::from_millis(if fast_runner2.is_simulation { fast_runner2.loop_sleep_ms_simulation } else { fast_runner2.loop_sleep_ms_realtrading })).await;
-        // }
-
-        let next_utc = Self::get_next_trigger_time_utc();
-        let mut next = self.next_time.lock().unwrap();
-        *next = next_utc;
+                    tokio::time::sleep(tokio::time::Duration::from_millis(if fast_runner.is_simulation { fast_runner.loop_sleep_ms_simulation } else { fast_runner.loop_sleep_ms_realtrading })).await;
+                }
+                println!("FastRunnerTask run() exits the loop");
+            }
+            let next_utc = Self::get_next_trigger_time_utc();
+            let mut next = this.next_time.lock().unwrap();
+            *next = next_utc;
+        })
     }
 }
 
@@ -170,53 +178,59 @@ impl RqTaskScheduler {
 
     pub fn start(&self) {
         thread::spawn(|| {
-            println!("RqTaskScheduler started");
-            loop {
-                let now = Utc::now();
-                let mut due_tasks: Vec<Arc<dyn RqTask>> = Vec::new();
-                let mut soonest: Option<DateTime<Utc>> = None;
+            // Use a separate Tokio runtime for the server thread
+            let sys = System::new(); // actix_web::rt::System to be able to use async in this new OS thread
+            sys.block_on(async {
+                println!("RqTaskScheduler started");
+                loop {
+                    let now = Utc::now();
+                    let mut due_tasks: Vec<Arc<dyn RqTask>> = Vec::new();
+                    let mut soonest: Option<DateTime<Utc>> = None;
 
-                {
-                    let tasks = RQ_TASK_SCHEDULER.tasks.lock().unwrap();
-                    for task in tasks.iter() {
-                        let trigger = task.get_next_trigger_time();
-                        if trigger <= now {
-                            due_tasks.push(task.clone());
-                        }
-                        match soonest {
-                            Some(s) if trigger < s => soonest = Some(trigger),
-                            None => soonest = Some(trigger),
-                            _ => {}
-                        }
-                    }
-                }
-
-                for task in due_tasks {
-                    task.run(); // TODO: Consider running in separate threads if tasks are long-running, because this will block the scheduler loop and delay other tasks.
-                }
-
-                soonest = None;
-                {
-                    let tasks = RQ_TASK_SCHEDULER.tasks.lock().unwrap();
-                    for task in tasks.iter() {
-                        let trigger = task.get_next_trigger_time();
-                        match soonest {
-                            Some(s) if trigger < s => soonest = Some(trigger),
-                            None => soonest = Some(trigger),
-                            _ => {}
+                    {
+                        let tasks = RQ_TASK_SCHEDULER.tasks.lock().unwrap();
+                        for task in tasks.iter() {
+                            let trigger = task.get_next_trigger_time();
+                            if trigger <= now {
+                                due_tasks.push(task.clone());
+                            }
+                            match soonest {
+                                Some(s) if trigger < s => soonest = Some(trigger),
+                                None => soonest = Some(trigger),
+                                _ => {}
+                            }
                         }
                     }
-                }
 
-                if let Some(s) = soonest {
-                    if s > now {
-                        let sleep_duration = (s - now).to_std().unwrap_or(time::Duration::from_secs(0));
-                        thread::sleep(sleep_duration);
+                    // Run due tasks asynchronously (await sequentially to keep it simple)
+                    for task in due_tasks {
+                        task.run().await;
                     }
-                } else {
-                    thread::sleep(time::Duration::from_secs(60));
+
+                    // Recompute soonest after tasks may have updated their next times
+                    soonest = None;
+                    {
+                        let tasks = RQ_TASK_SCHEDULER.tasks.lock().unwrap();
+                        for task in tasks.iter() {
+                            let trigger = task.get_next_trigger_time();
+                            match soonest {
+                                Some(s) if trigger < s => soonest = Some(trigger),
+                                None => soonest = Some(trigger),
+                                _ => {}
+                            }
+                        }
+                    }
+
+                    if let Some(s) = soonest {
+                        if s > now {
+                            let sleep_duration = (s - now).to_std().unwrap_or(std::time::Duration::from_secs(0));
+                            tokio_time::sleep(sleep_duration).await;
+                        }
+                    } else {
+                        tokio_time::sleep(std::time::Duration::from_secs(60)).await;
+                    }
                 }
-            }
+            });
         });
     }
 }

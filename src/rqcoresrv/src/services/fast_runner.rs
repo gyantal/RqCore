@@ -365,9 +365,17 @@ impl FastRunner {
 
         self.determine_position_market_values_gyantal(&mut new_buy_events, &mut new_sell_events); // replace it to blukucz if needed
 
-        let gateways = RQ_BROKERS_WATCHER.gateways.lock().unwrap();
-        let ib_client_guard = gateways[1].lock().unwrap();  // 0 is dcmain, 1 is gyantal
-        let ib_client = ib_client_guard.ib_client.as_ref().unwrap();
+        // Acquire and clone the ib_client handle (Arc<Client>) without holding locks across await
+        let ib_client = {
+            let gateways = RQ_BROKERS_WATCHER.gateways.lock().unwrap();
+            gateways[1]
+                .lock()
+                .unwrap()
+                .ib_client
+                .as_ref()
+                .cloned()
+                .expect("ib_client is not initialized")
+        };
 
         // This will do a real trade. To prevent trade happening you have 3 options.
         // 1. Comment out ib_client.order() (for both Buy/Sell) Just comment it back in when you want to trade.

@@ -13,7 +13,9 @@ pub struct Gateway {
 
     // https://github.com/wboayue/rust-ibapi
     // The Client can be shared between threads to support concurrent operations. let client = Arc::clone(&client);
-    pub ib_client: Option<Client>,
+    
+    // The Client is shared safely via Arc so it can be cloned and used across awaits.
+    pub ib_client: Option<Arc<Client>>,
 }
 
 impl Gateway {
@@ -29,7 +31,7 @@ impl Gateway {
         println!("Gateway.init() start");
         match Client::connect(&self.connection_url, self.client_id).await {
             Ok(client) => {
-                self.ib_client = Some(client);
+                self.ib_client = Some(Arc::new(client));
                 log::info!("Connected to TWS at {}", self.connection_url);
             }
             Err(e) => {
@@ -43,7 +45,7 @@ impl Gateway {
 
     pub async fn exit(&mut self) {
         // Client is automatically disconnected when dropped
-        self.ib_client = None;
+        self.ib_client = None; // disconnect on drop
         log::info!("Disconnected from TWS at {}", self.connection_url);
     }
 }
@@ -53,6 +55,8 @@ pub struct BrokersWatcher {
     // This Mutex will assures that only 1 thread can access the BrokerWatcher, which is too much restriction,
     // because 1. it can be multithreaded, or that if it contains 2 clients, those 2 clients should be accessed parallel.
     // However, it will suffice for a while. Yes. We will need the mutex at lower level later.
+
+    // gateways are Arc<Mutex<Gateway>> so each gateway can be locked independently
     pub gateways: Mutex<Vec<Arc<Mutex<Gateway>>>>,
 }
 
@@ -80,7 +84,6 @@ impl BrokersWatcher {
         let mut gateway1 = Gateway::new(connection_url_gyantal, client_id);
         gateway1.init().await;
         gateways.push(Arc::new(Mutex::new(gateway1)));
-        
     }
 
     pub async fn exit(&self) {
@@ -89,10 +92,5 @@ impl BrokersWatcher {
             gateway.lock().unwrap().exit().await;
         }
         gateways.clear();
-        
-        // for gateway in &mut self.gateways {
-        //     gateway.exit().await;
-        // }
-        // self.gateways.clear();
     }
 }
