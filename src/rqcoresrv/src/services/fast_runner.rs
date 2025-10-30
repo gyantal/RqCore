@@ -9,8 +9,31 @@ use serde::Deserialize;
 use ibapi::{prelude::*};
 use std::fs;
 use std::time::SystemTime;
+use std::future::Future;
 
 use crate::broker_common::brokers_watcher;
+
+use std::time::Instant;
+
+pub fn benchmark_elapsed_time(name: &str, f: impl FnOnce()) {
+    let start = Instant::now();
+    f();
+    let elapsed = start.elapsed();
+    let micros = elapsed.as_secs_f64() * 1_000_000.0;
+    println!("Elapsed Time of {}: {:.2}us", name, micros); // TODO: no native support thousand separators in float or int. Use crate 'num-format' or 'thousands' or better: write a lightweight formatter train in RqCommon
+}
+
+pub async fn benchmark_elapsed_time_async<F, Fut>(name: &str, f: F)
+where
+    F: FnOnce() -> Fut,
+    Fut: Future<Output = ()>,
+{
+    let start = Instant::now();
+    f().await;
+    let elapsed = start.elapsed();
+    let micros = elapsed.as_secs_f64() * 1_000_000.0;
+    println!("Elapsed Time of {}: {:.2}us", name, micros);
+}
 
 #[derive(Debug, Deserialize)]
 pub struct ApiResponse {
@@ -123,7 +146,7 @@ impl FastRunner {
             is_simulation: true, // at trading, change this to false. Also check if IbGateway is in ReadOnly mode.
 
             loop_sleep_ms_simulation: 3750, // usually 3750
-            loop_sleep_ms_realtrading: 500, // usually 500ms
+            loop_sleep_ms_realtrading: 500, // usually 500ms (note that reqwest.client.get() is 500-700ms)
             is_loop_active: Arc::new(AtomicBool::new(false)),
             has_trading_ever_started: false,
             // initialize cookies cache
@@ -158,23 +181,28 @@ impl FastRunner {
         let target_action_date = target_action_date_naive.format("%Y-%m-%d").to_string();
         // target_action_date = "2025-10-17".to_string(); // Monday date
 
-        self.ensure_cookies_loaded(); // cookies are reloaded from file only if needed, if the file changed.
+        benchmark_elapsed_time("ensure_cookies_loaded()", || {  // 300us first, 70us later
+            self.ensure_cookies_loaded(); // cookies are reloaded from file only if needed, if the file changed.
+        });
 
         const URL: &str = "https://seekingalpha.com/api/v3/quant_pro_portfolio/transactions?include=ticker.slug%2Cticker.name%2Cticker.companyName&page[size]=1000&page[number]=1";
 
-        // Build client with cookies
-        let client = reqwest::Client::builder()
-            .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-            .build().expect("Client::builder() failed!");
+        let mut body_text: String= String::new();
+        benchmark_elapsed_time_async("reqwest.Client.get()", || async { // 1,800-3,600ms first, 500-700ms later with keep-alive
+            // Build client with cookies
+            let client = reqwest::Client::builder()
+                .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                .build().expect("Client::builder() failed!");
 
-        let resp = client.get(URL)
-            .header("Cookie", self.cookies.as_deref().expect("cookies not initialized"))
-            .send()
-            .await
-            .expect("reqwest client.get() failed!");
+            let resp = client.get(URL)
+                .header("Cookie", self.cookies.as_deref().expect("cookies not initialized"))
+                .send()
+                .await
+                .expect("reqwest client.get() failed!");
 
-        // Get response as text first
-        let body_text = resp.text().await.expect("resp.text() failed!");
+            // Get response as text first
+            body_text = resp.text().await.expect("resp.text() failed!");
+        }).await;
         
         if body_text.len() < 1000 {
             if body_text.contains("Subscription is required") {
@@ -418,7 +446,7 @@ impl FastRunner {
                 let mut fast_runner2 = FastRunner::new(); // fake another instance, because self cannot be used, because it will be out of scope after this function returns
 
                 while is_loop_active_clone.load(Ordering::SeqCst) {
-                    println!("Loop iteration");
+                    println!(">* Loop iteration");
 
                     fast_runner2.fastrunning_loop_impl(&brokers_watcher).await;
 
