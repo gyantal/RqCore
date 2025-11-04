@@ -44,8 +44,8 @@ impl HeartbeatTask {
     pub fn new() -> Self {
         HeartbeatTask {
             name: "HeartbeatTask".to_string(),
-            interval: Duration::minutes(1),
-            next_time: Mutex::new(Utc::now() + Duration::minutes(1)),
+            interval: Duration::minutes(10),
+            next_time: Mutex::new(Utc::now() + Duration::minutes(10)),
         }
     }
 }

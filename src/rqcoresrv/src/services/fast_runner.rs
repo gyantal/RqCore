@@ -177,7 +177,7 @@ impl FastRunner {
         let days_to_subtract = current_date.weekday().num_days_from_monday() as i64;
         let target_action_date_naive = current_date - chrono::Duration::days(days_to_subtract);
         let target_action_date = target_action_date_naive.format("%Y-%m-%d").to_string();
-        // target_action_date = "2025-10-17".to_string(); // Monday date
+        // let target_action_date = "2025-11-03".to_string(); // Monday date
 
         benchmark_elapsed_time("ensure_cookies_loaded()", || {  // 300us first, 70us later
             self.ensure_cookies_loaded(); // cookies are reloaded from file only if needed, if the file changed.
@@ -392,34 +392,16 @@ impl FastRunner {
         println!("Loop: On {}, new positions:", target_action_date);
         println!("Process New BUYS ({}):", new_buy_events.len());
         for event in &new_buy_events {
-            println!("  {} ({}, ${}, ${}) , ", event.ticker, event.company_name, event.price.as_deref().unwrap_or("N/A"), event.pos_market_value);
+            println!("  {} ({}, ${}, ${}, event)", event.ticker, event.company_name, event.price.as_deref().unwrap_or("N/A"), event.pos_market_value);
             let contract = Contract::stock(&event.ticker).build();
-
-            if event.price.is_none() { // typical for new stocks that Price/Share column is "Scheduled"
-                // ib_client_gyantal: Error: Parse(5, "Invalid Real-time Query:No market data permissions for NYSE STK. Requested market data requires additional subscription for API. See link in 'Market Data Connections' dialog for more details."
-                println!("  {} ({}, waiting for real-time bar 0...) , ", event.ticker, event.company_name);
-                let mut subscription = ib_client_dcmain
-                    .realtime_bars(&contract, RealtimeBarSize::Sec5, RealtimeWhatToShow::Trades, TradingHours::Regular).await
-                    .expect("realtime bars request failed!");
-
-                println!("  {} ({}, waiting for real-time bar...) , ", event.ticker, event.company_name);
-                while let Some(bar_result) = subscription.next().await {
-                    match bar_result {
-                        Ok(bar) => println!("{bar:?}"),
-                        Err(e) => eprintln!("Error: {e:?}"),
-                    }
-                    break; // just 1 bar for testing, otherwise it would block here forever
-                }
+            let price = get_price(&ib_client_dcmain, event, &contract).await;
+            if price.is_nan() {  // If no price, we cannot calculate nShares, not even MKT orders possible
+                println!("  {} ({}, cannot determine price, skipping...)", event.ticker, event.company_name);
+                continue;
             }
 
-            if event.price.is_none() // If no price, we cannot calculate nShares, not even MKT orders possible
-                { continue;}
-            let price_str = event.price.as_ref().unwrap();
-            if price_str.parse::<f64>().is_err()
-                { continue;}
-            let price = price_str.parse::<f64>().unwrap();
             let num_shares = (event.pos_market_value / price).floor() as i32;
-            println!("  {} ({}, nShares: {}) , ", event.ticker, event.company_name, num_shares);
+            println!("  {} ({}, price: ${}, nShares: {}, order)", event.ticker, event.company_name, price, num_shares);
 
             if self.is_simulation // prevent trade in simulation mode
                 { continue;}
@@ -435,17 +417,16 @@ impl FastRunner {
         
         println!("Process New SELLS ({}):", new_sell_events.len());
         for event in &new_sell_events {
-            println!("  {} ({}, ${}, ${}) , ", event.ticker, event.company_name, event.price.as_deref().unwrap_or("N/A"), event.pos_market_value);
-
-            if event.price.is_none()
-                { continue;}
-            let price_str = event.price.as_ref().unwrap();
-            if price_str.parse::<f64>().is_err()
-                { continue;}
-            let price = price_str.parse::<f64>().unwrap();
-            let num_shares = (event.pos_market_value / price).floor() as i32;
+            println!("  {} ({}, ${}, ${}, event)", event.ticker, event.company_name, event.price.as_deref().unwrap_or("N/A"), event.pos_market_value);
             let contract = Contract::stock(&event.ticker).build();
-            println!("  {} ({}, nShares: {}) , ", event.ticker, event.company_name, num_shares);
+            let price = get_price(&ib_client_dcmain, event, &contract).await;
+            if price.is_nan() {  // If no price, we cannot calculate nShares, not even MKT orders possible
+                println!("  {} ({}, cannot determine price, skipping...)", event.ticker, event.company_name);
+                continue;
+            }
+
+            let num_shares = (event.pos_market_value / price).floor() as i32;
+            println!("  {} ({}, price: ${}, nShares: {}, order)", event.ticker, event.company_name, price, num_shares);
 
             if self.is_simulation // prevent trade in simulation mode
                 { continue;}
@@ -492,4 +473,36 @@ impl FastRunner {
         self.is_loop_active.store(false, Ordering::SeqCst);
     }
 
+}
+
+async fn get_price(ib_client_dcmain: &Arc<Client>, event: &TransactionEvent, contract: &Contract) -> f64 {
+    let mut price = f64::NAN;
+    if !event.price.is_none() {
+        let price_str = event.price.as_ref().unwrap();
+        if !price_str.parse::<f64>().is_err() {
+            price = price_str.parse::<f64>().unwrap();
+        }
+    }
+    if price.is_nan() { // typical for new stocks that Price/Share column is "Scheduled" on the day of the release
+        // TODO: there is probably a better way to get the last price, e.g. via market data snapshot than streaming real-time bars. 
+        // Also, it only works during market hours. After market closes, it doesn't return any bars and we wait forever.
+        // We ask the 5 seconds bars, but luckily the first bar comes immediately. Later new bars arrive every 5 seconds.
+        // ib_client_gyantal: Error: Parse(5, "Invalid Real-time Query:No market data permissions for NYSE STK. Requested market data requires additional subscription for API. See link in 'Market Data Connections' dialog for more details."
+        let mut subscription = ib_client_dcmain
+            .realtime_bars(contract, RealtimeBarSize::Sec5, RealtimeWhatToShow::Trades, TradingHours::Regular).await
+            .expect("realtime bars request failed!");
+
+        println!("  {} ({}, waiting for real-time bar...) , ", event.ticker, event.company_name);
+        while let Some(bar_result) = subscription.next().await {
+            match bar_result {
+                Ok(bar) => { 
+                    println!("{bar:?}"); 
+                    price = bar.close; 
+                },
+                Err(e) => eprintln!("Error: {e:?}"),
+            }
+            break; // just 1 bar for testing, otherwise it would block here forever
+        }
+    }
+    price
 }

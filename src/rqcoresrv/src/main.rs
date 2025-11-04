@@ -252,14 +252,14 @@ async fn console_menu_loop(server_handle: ServerHandle, runtime_info: Arc<Runtim
         println!("\x1b[35m----  (type and press Enter)  ----\x1b[0m"); // Print in magenta using ANSI escape code
         println!("1) Say Hello. Don't do anything. Check responsivenes.");
         println!("2) Show runtime info");
-        println!("3) Test: tokio::spawn() background async task in main runtime");
-        println!("4) Test IbAPI: historical data");
-        println!("5) Test IbAPI: trade");
-        println!("6) FastRunner: Test HttpDownload");
-        println!("7) FastRunner loop: Start");
-        println!("8) FastRunner loop: Stop");
-        println!("9) TaskScheduler: Show next trigger times.");
-        println!("10) Stop server and exit gracefully (Avoid Ctrl-^C).");
+        println!("3) TaskScheduler: Show next trigger times.");
+        println!("41) Test: tokio::spawn() background async task in main runtime");
+        println!("42) Test IbAPI: historical data");
+        println!("43) Test IbAPI: trade");
+        println!("51) FastRunner: Test HttpDownload");
+        println!("52) FastRunner loop: Start");
+        println!("53) FastRunner loop: Stop");
+        println!("9) Stop server and exit gracefully (Avoid Ctrl-^C).");
         print!("Choice: ");
         // flush stdout (small blocking is fine here)
         use std::io::Write;
@@ -276,11 +276,14 @@ async fn console_menu_loop(server_handle: ServerHandle, runtime_info: Arc<Runtim
         match line.trim() {
             "1" => {
                         println!("Hello. I am not crashed yet! :)");
-                    }
+            }
             "2" => {
                 print_runtime_info(&runtime_info);
-            }
+            },
             "3" => {
+                RQ_TASK_SCHEDULER.print_next_trigger_times();
+            },
+            "41" => {
                 println!("Spawning background async task...");
                 tokio::spawn(async {
                     loop {
@@ -289,25 +292,22 @@ async fn console_menu_loop(server_handle: ServerHandle, runtime_info: Arc<Runtim
                     }
                 });
             }
-            "4" => {
+            "42" => {
                 test_ibapi_hist_data().await;
             }
-            "5" => {
+            "43" => {
                 test_ibapi_trade().await;
             }
-            "6" => {
+            "51" => {
                 fast_runner.test_http_download().await;
             }
-            "7" => {
+            "52" => {
                 fast_runner.start_fastrunning_loop().await;
             }
-            "8" => {
+            "53" => {
                 fast_runner.stop_fastrunning_loop().await;
             },
             "9" => {
-                RQ_TASK_SCHEDULER.print_next_trigger_times();
-            }
-            "10" => {
                 println!("Stopping server...");
                 server_handle.stop(false).await;
                 break;
