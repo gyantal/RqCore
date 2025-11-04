@@ -1,11 +1,9 @@
 use chrono::{DateTime, Datelike, Duration, NaiveTime, TimeZone, Utc};
 use chrono_tz::{Tz, US::Eastern};
 use std::sync::{Arc, LazyLock, Mutex};
-use actix_web::{rt::System};
 use tokio::time as tokio_time;
 use std::future::Future;
 use std::pin::Pin;
-use std::thread;
 
 use crate::services::fast_runner::FastRunner;
 
@@ -87,14 +85,14 @@ impl FastRunnerTask {
     fn get_next_trigger_time_utc() -> DateTime<Utc> { // we run 3 times daily: 2x Simulation, 1x RealTrading at 11:01 ET, 11:30 ET, 11:59 ET
         let tz = Eastern;
         let targets = [
-            NaiveTime::from_hms_opt(11, 1, 10).unwrap(),
-            NaiveTime::from_hms_opt(11, 30, 10).unwrap(),
-            NaiveTime::from_hms_opt(11, 59, 10).unwrap(),
+            NaiveTime::from_hms_opt(11, 1, 20).unwrap(),
+            NaiveTime::from_hms_opt(11, 30, 20).unwrap(),
+            NaiveTime::from_hms_opt(11, 59, 20).unwrap(),
         ];
         // let targets = [
-        //     NaiveTime::from_hms_opt(19, 03, 10).unwrap(),
-        //     NaiveTime::from_hms_opt(19, 55, 10).unwrap(),
-        //     NaiveTime::from_hms_opt(19, 59, 10).unwrap(),
+        //     NaiveTime::from_hms_opt(19, 03, 20).unwrap(),
+        //     NaiveTime::from_hms_opt(19, 55, 20).unwrap(),
+        //     NaiveTime::from_hms_opt(19, 59, 20).unwrap(),
         // ];
 
         targets
@@ -134,7 +132,7 @@ impl RqTask for FastRunnerTask {
                 
                 let deadline = tokio::time::Instant::now() + tokio::time::Duration::from_secs(4 * 60 + 30);
                 while tokio::time::Instant::now() < deadline { // if the loop runs more than 4 minutes 30 seconds, then finish the loop
-                    println!(">* FastRunnerTask run(): Loop iteration");
+                    println!(">* FastRunnerTask run(): Loop iteration (IsSimu:{})", fast_runner.is_simulation);
 
                     fast_runner.fastrunning_loop_impl().await;
 
@@ -177,60 +175,56 @@ impl RqTaskScheduler {
     }
 
     pub fn start(&self) {
-        thread::spawn(|| {
-            // Use a separate Tokio runtime for the server thread
-            let sys = System::new(); // actix_web::rt::System to be able to use async in this new OS thread
-            sys.block_on(async {
-                println!("RqTaskScheduler started");
-                loop {
-                    let now = Utc::now();
-                    let mut due_tasks: Vec<Arc<dyn RqTask>> = Vec::new();
-                    let mut soonest: Option<DateTime<Utc>> = None;
+        tokio::spawn(async {
+            println!("RqTaskScheduler started");
+            loop {
+                let now = Utc::now();
+                let mut due_tasks: Vec<Arc<dyn RqTask>> = Vec::new();
+                let mut soonest: Option<DateTime<Utc>> = None;
 
-                    {
-                        let tasks = RQ_TASK_SCHEDULER.tasks.lock().unwrap();
-                        for task in tasks.iter() {
-                            let trigger = task.get_next_trigger_time();
-                            if trigger <= now {
-                                due_tasks.push(task.clone());
-                            }
-                            match soonest {
-                                Some(s) if trigger < s => soonest = Some(trigger),
-                                None => soonest = Some(trigger),
-                                _ => {}
-                            }
+                {
+                    let tasks = RQ_TASK_SCHEDULER.tasks.lock().unwrap();
+                    for task in tasks.iter() {
+                        let trigger = task.get_next_trigger_time();
+                        if trigger <= now {
+                            due_tasks.push(task.clone());
                         }
-                    }
-
-                    // Run due tasks asynchronously (await sequentially to keep it simple)
-                    for task in due_tasks {
-                        task.run().await;
-                    }
-
-                    // Recompute soonest after tasks may have updated their next times
-                    soonest = None;
-                    {
-                        let tasks = RQ_TASK_SCHEDULER.tasks.lock().unwrap();
-                        for task in tasks.iter() {
-                            let trigger = task.get_next_trigger_time();
-                            match soonest {
-                                Some(s) if trigger < s => soonest = Some(trigger),
-                                None => soonest = Some(trigger),
-                                _ => {}
-                            }
+                        match soonest {
+                            Some(s) if trigger < s => soonest = Some(trigger),
+                            None => soonest = Some(trigger),
+                            _ => {}
                         }
-                    }
-
-                    if let Some(s) = soonest {
-                        if s > now {
-                            let sleep_duration = (s - now).to_std().unwrap_or(std::time::Duration::from_secs(0));
-                            tokio_time::sleep(sleep_duration).await;
-                        }
-                    } else {
-                        tokio_time::sleep(std::time::Duration::from_secs(60)).await;
                     }
                 }
-            });
+
+                // Run due tasks asynchronously (await sequentially to keep it simple)
+                for task in due_tasks {
+                    task.run().await;
+                }
+
+                // Recompute soonest after tasks may have updated their next times
+                soonest = None;
+                {
+                    let tasks = RQ_TASK_SCHEDULER.tasks.lock().unwrap();
+                    for task in tasks.iter() {
+                        let trigger = task.get_next_trigger_time();
+                        match soonest {
+                            Some(s) if trigger < s => soonest = Some(trigger),
+                            None => soonest = Some(trigger),
+                            _ => {}
+                        }
+                    }
+                }
+
+                if let Some(s) = soonest {
+                    if s > now {
+                        let sleep_duration = (s - now).to_std().unwrap_or(std::time::Duration::from_secs(0));
+                        tokio_time::sleep(sleep_duration).await;
+                    }
+                } else {
+                    tokio_time::sleep(std::time::Duration::from_secs(60)).await;
+                }
+            }
         });
     }
 }

@@ -1,20 +1,21 @@
-use std::{thread, sync::{Arc}, path::Path};
-use std::io::{self, Write};
+use std::{sync::{Arc}, path::Path};
+use std::fs::File;
+use std::io::BufReader;
+use std::fmt;
+use tokio::io::{self, AsyncBufReadExt};
 use std::env;
 use log;
 use spdlog::{prelude::*, sink::{Sink, StdStreamSink, FileSink}, formatter::{pattern, PatternFormatter}};
 use time::macros::datetime;
 use chrono::Local;
-use actix_web::{web, App, HttpServer, rt::System};
+use actix_web::{web, App, HttpServer};
+use actix_web::dev::ServerHandle;
 use actix_files::Files;
 use ibapi::{prelude::*, market_data::historical::WhatToShow};
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use rustls::server::{ClientHello, ResolvesServerCert, ResolvesServerCertUsingSni};
 use rustls::sign::CertifiedKey;
 use rustls::crypto::aws_lc_rs::sign::any_supported_type;
-use std::fs::File;
-use std::io::BufReader;
-use std::fmt;
 use rustls_pemfile;
 use rustls::{ServerConfig};
 
@@ -136,107 +137,112 @@ fn is_taconite_domain(ctx: &actix_web::guard::GuardContext) -> bool {
     host.to_lowercase().contains("thetaconite.com")
 }
 
-fn actix_websrv_run() {
-    thread::spawn(|| {
-        // Use a separate Tokio runtime for the server thread
-        let sys = System::new(); // actix_web::rt::System to be able to use async in this new OS thread
-        sys.block_on(async {
-            let http_listening_port = 8080;
-            let https_listening_port = 8443;
+fn actix_websrv_run(runtime_info: Arc<RuntimeInfo>, server_workers: usize) -> std::io::Result<(actix_web::dev::Server, ServerHandle)> {
+    let runtime_info_for_server = runtime_info;
 
-            // Load certificates and keys
-            fn load_certs(filename: &str) -> Vec<CertificateDer<'static>> {
-                let certfile = File::open(filename).expect(&format!("cannot open certificate file {}", filename));
-                let mut reader = BufReader::new(certfile);
-                rustls_pemfile::certs(&mut reader).collect::<Result<Vec<_>, _>>().expect(&format!("invalid certificate in file {}", filename))
-            }
+    let http_listening_port = 8080;
+    let https_listening_port = 8443;
 
-            fn load_private_key(filename: &str) -> PrivateKeyDer<'static> {
-                let keyfile = File::open(filename).expect(&format!("cannot open private key file {}", filename));
-                let mut reader = BufReader::new(keyfile);
-                rustls_pemfile::private_key(&mut reader).expect(&format!("invalid private key in file {}", filename)).expect(&format!("no private key found in {}", filename))
-            }
+    // Load certificates and keys
+    fn load_certs(filename: &str) -> Vec<CertificateDer<'static>> {
+        let certfile = File::open(filename).expect(&format!("cannot open certificate file {}", filename));
+        let mut reader = BufReader::new(certfile);
+        rustls_pemfile::certs(&mut reader).collect::<Result<Vec<_>, _>>().expect(&format!("invalid certificate in file {}", filename))
+    }
 
-            let sensitive_config_folder_path = sensitive_config_folder_path();
-            let cert_base_path = format!("{}https_certs/", sensitive_config_folder_path);
+    fn load_private_key(filename: &str) -> PrivateKeyDer<'static> {
+        let keyfile = File::open(filename).expect(&format!("cannot open private key file {}", filename));
+        let mut reader = BufReader::new(keyfile);
+        rustls_pemfile::private_key(&mut reader).expect(&format!("invalid private key in file {}", filename)).expect(&format!("no private key found in {}", filename))
+    }
 
-            let rq_certs = load_certs(&format!("{}rqcore.com/fullchain.pem", cert_base_path));
-            let rq_key = load_private_key(&format!("{}rqcore.com/privkey.pem", cert_base_path));
-            let rq_signing_key = any_supported_type(&rq_key).expect("unsupported rqcore private key type");
-            let rq_certified_key = CertifiedKey::new(rq_certs, rq_signing_key);
+    let sensitive_config_folder_path = sensitive_config_folder_path();
+    let cert_base_path = format!("{}https_certs/", sensitive_config_folder_path);
 
-            let theta_certs = load_certs(&format!("{}thetaconite.com/fullchain.pem", cert_base_path));
-            let theta_key = load_private_key(&format!("{}thetaconite.com/privkey.pem", cert_base_path));
-            let theta_signing_key = any_supported_type(&theta_key).expect("unsupported thetaconite private key type");
-            let theta_certified_key = CertifiedKey::new(theta_certs, theta_signing_key);
+    let rq_certs = load_certs(&format!("{}rqcore.com/fullchain.pem", cert_base_path));
+    let rq_key = load_private_key(&format!("{}rqcore.com/privkey.pem", cert_base_path));
+    let rq_signing_key = any_supported_type(&rq_key).expect("unsupported rqcore private key type");
+    let rq_certified_key = CertifiedKey::new(rq_certs, rq_signing_key);
 
-            // Default cert for 'localhost' and IP. Created as: openssl req -x509 -nodes -days 3650 -newkey rsa:2048 -keyout privkey.pem -out fullchain.pem -subj "/CN=localhost" -addext "subjectAltName=DNS:localhost,DNS:127.0.0.1"
-            let default_certs = load_certs(&format!("{}localhost/fullchain.pem", cert_base_path));
-            let default_key = load_private_key(&format!("{}localhost/privkey.pem", cert_base_path));
-            let default_signing_key = any_supported_type(&default_key).expect("unsupported default key");
-            let default_certified_key = CertifiedKey::new(default_certs, default_signing_key);
+    let theta_certs = load_certs(&format!("{}thetaconite.com/fullchain.pem", cert_base_path));
+    let theta_key = load_private_key(&format!("{}thetaconite.com/privkey.pem", cert_base_path));
+    let theta_signing_key = any_supported_type(&theta_key).expect("unsupported thetaconite private key type");
+    let theta_certified_key = CertifiedKey::new(theta_certs, theta_signing_key);
 
-            // the SNI (Server Name Indication) hostname sent by the client
-            // ResolvesServerCertUsingSni matches DNS hostnames, not IPs, and SNI itself is defined for hostnames (not addresses). 
-            // So IP 127.0.0.1 won’t ever hit an entry in that resolver. We need a SniWithDefaultFallbackResolver to provide a default cert for IP connections.
-            let mut sni_resolver = ResolvesServerCertUsingSni::new();
-            sni_resolver.add("rqcore.com", rq_certified_key.clone()).expect("Invalid DNS name for rqcore.com");
-            sni_resolver.add("www.rqcore.com", rq_certified_key.clone()).expect("Invalid DNS name for www.rqcore.com");
-            sni_resolver.add("thetaconite.com", theta_certified_key.clone()).expect("Invalid DNS name for thetaconite.com");
-            sni_resolver.add("www.thetaconite.com", theta_certified_key.clone()).expect("Invalid DNS name for www.thetaconite.com");
-            sni_resolver.add("localhost", default_certified_key.clone()).expect("Invalid localhost DNS name"); // default cert for localhost and IP e.g. 127.0.0.1
+    // Default cert for 'localhost' and IP. Created as: openssl req -x509 -nodes -days 3650 -newkey rsa:2048 -keyout privkey.pem -out fullchain.pem -subj "/CN=localhost" -addext "subjectAltName=DNS:localhost,DNS:127.0.0.1"
+    let default_certs = load_certs(&format!("{}localhost/fullchain.pem", cert_base_path));
+    let default_key = load_private_key(&format!("{}localhost/privkey.pem", cert_base_path));
+    let default_signing_key = any_supported_type(&default_key).expect("unsupported default key");
+    let default_certified_key = CertifiedKey::new(default_certs, default_signing_key);
 
-            let cert_resolver = Arc::new(SniWithDefaultFallbackResolver {
-                inner: sni_resolver,
-                default_ck: Arc::new(default_certified_key.clone()), // use the default (for 'localhost') for IP connections when no domain name sent by client
-            });
+    // the SNI (Server Name Indication) hostname sent by the client
+    // ResolvesServerCertUsingSni matches DNS hostnames, not IPs, and SNI itself is defined for hostnames (not addresses). 
+    // So IP 127.0.0.1 won’t ever hit an entry in that resolver. We need a SniWithDefaultFallbackResolver to provide a default cert for IP connections.
+    let mut sni_resolver = ResolvesServerCertUsingSni::new();
+    sni_resolver.add("rqcore.com", rq_certified_key.clone()).expect("Invalid DNS name for rqcore.com");
+    sni_resolver.add("www.rqcore.com", rq_certified_key.clone()).expect("Invalid DNS name for www.rqcore.com");
+    sni_resolver.add("thetaconite.com", theta_certified_key.clone()).expect("Invalid DNS name for thetaconite.com");
+    sni_resolver.add("www.thetaconite.com", theta_certified_key.clone()).expect("Invalid DNS name for www.thetaconite.com");
+    sni_resolver.add("localhost", default_certified_key.clone()).expect("Invalid localhost DNS name"); // default cert for localhost and IP e.g. 127.0.0.1
 
-            let tls_config = ServerConfig::builder_with_provider(Arc::new(rustls::crypto::aws_lc_rs::default_provider()))
-                .with_safe_default_protocol_versions()
-                .unwrap()
-                .with_no_client_auth()
-                .with_cert_resolver(cert_resolver);
-
-            // Advertise both http/2 and http/1.1 support. However Actix's bind_rustls_0_23() automatically adds them (and in future versions, it might add http/3 as well). So, don't explicetly add them here.
-            // tls_config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
-
-            // Test locally the impersonation of multiple domains with different subfolders
-            // curl -v --insecure https://localhost:8443
-            // curl -v --insecure https://127.0.0.1:8443
-            // curl -v --resolve rqcore.com:8443:127.0.0.1 --insecure https://rqcore.com:8443/  
-            // curl -v --resolve thetaconite.com:8443:127.0.0.1 --insecure https://thetaconite.com:8443/ 
-            // curl -v --resolve thetaconite.com:8080:127.0.0.1 --insecure http://thetaconite.com:8080/
-            HttpServer::new(|| {
-                App::new()
-                // We can serve many domains, each having its own subfolder in ./static/
-                // However, when we rewritten path in a middleware (from /index.html to /taconite/index.html), it was not being used by Actix Files
-                // Because the main Actix -Files service is mounted at the root "/" and doesn't know (?) how to handle the "/taconite" prefix. 
-                // We need to mount two separate Files services - one for taconite and one for default content
-                // fn_guard(is_taconite_domain) is a quick check based on the Host header, so not much overhead
-                    .service(
-                        web::scope("")
-                            .guard(actix_web::guard::fn_guard(is_taconite_domain))
-                            .service(Files::new("/", "./static/taconite").prefer_utf8(true).index_file("index.html"))
-                    )
-                    .service(
-                        web::scope("")
-                            .guard(actix_web::guard::fn_guard(|ctx| !is_taconite_domain(ctx)))
-                            .service(Files::new("/", "./static").prefer_utf8(true).index_file("index.html"))
-                    )
-            })
-            .bind(format!("0.0.0.0:{}", http_listening_port)).unwrap()  // Don't bind to 127.0.0.1 because it only listens to localhost, not external requests to the IP
-            .bind_rustls_0_23(format!("0.0.0.0:{}", https_listening_port), tls_config).unwrap()
-            .run()
-            .await
-            .unwrap();
-        });
+    let cert_resolver = Arc::new(SniWithDefaultFallbackResolver {
+        inner: sni_resolver,
+        default_ck: Arc::new(default_certified_key.clone()), // use the default (for 'localhost') for IP connections when no domain name sent by client
     });
+
+    let tls_config = ServerConfig::builder_with_provider(Arc::new(rustls::crypto::aws_lc_rs::default_provider()))
+        .with_safe_default_protocol_versions()
+        .unwrap()
+        .with_no_client_auth()
+        .with_cert_resolver(cert_resolver);
+
+    // Advertise both http/2 and http/1.1 support. However Actix's bind_rustls_0_23() automatically adds them (and in future versions, it might add http/3 as well). So, don't explicetly add them here.
+    // tls_config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
+
+    // Test locally the impersonation of multiple domains with different subfolders
+    // curl -v --insecure https://localhost:8443
+    // curl -v --insecure https://127.0.0.1:8443
+    // curl -v --resolve rqcore.com:8443:127.0.0.1 --insecure https://rqcore.com:8443/  
+    // curl -v --resolve thetaconite.com:8443:127.0.0.1 --insecure https://thetaconite.com:8443/ 
+    // curl -v --resolve thetaconite.com:8080:127.0.0.1 --insecure http://thetaconite.com:8080/
+
+    let server = HttpServer::new(move || {
+        // Keep it as an example for Dependency Injection:
+        // If you ever need runtime_info inside handlers,
+        // you can clone info_for_server here and put it into app data.
+        let _runtime_info = runtime_info_for_server.clone();
+        App::new()
+        // We can serve many domains, each having its own subfolder in ./static/
+        // However, when we rewritten path in a middleware (from /index.html to /taconite/index.html), it was not being used by Actix Files
+        // Because the main Actix -Files service is mounted at the root "/" and doesn't know (?) how to handle the "/taconite" prefix. 
+        // We need to mount two separate Files services - one for taconite and one for default content
+        // fn_guard(is_taconite_domain) is a quick check based on the Host header, so not much overhead
+            .service(
+                web::scope("")
+                    .guard(actix_web::guard::fn_guard(is_taconite_domain))
+                    .service(Files::new("/", "./static/taconite").prefer_utf8(true).index_file("index.html"))
+            )
+            .service(
+                web::scope("")
+                    .guard(actix_web::guard::fn_guard(|ctx| !is_taconite_domain(ctx)))
+                    .service(Files::new("/", "./static").prefer_utf8(true).index_file("index.html"))
+            )
+    })
+    .workers(server_workers)
+    .bind(format!("0.0.0.0:{}", http_listening_port))?  // Don't bind to 127.0.0.1 because it only listens to localhost, not external requests to the IP
+    .bind_rustls_0_23(format!("0.0.0.0:{}", https_listening_port), tls_config)?
+    .run();
+
+    let handle = server.handle();
+    Ok((server, handle))
 }
 
-async fn display_console_menu() {
-    println!("display_console_menu(): start");
 
+async fn console_menu_loop(server_handle: ServerHandle, runtime_info: Arc<RuntimeInfo>) {
     let mut fast_runner = services::fast_runner::FastRunner::new();
+
+    let stdin = io::stdin();
+    let mut lines = io::BufReader::new(stdin).lines();
 
     loop {
         println!();
@@ -244,57 +250,84 @@ async fn display_console_menu() {
         // Or probably better:: use fern::colors::{Color, ColoredLevelConfig}; or better find a popular crate for colored console output
         // Actually, I have to implement my own RqConsole anyway, because we need to log to file, or log the timestamps as well
         println!("\x1b[35m----  (type and press Enter)  ----\x1b[0m"); // Print in magenta using ANSI escape code
-        println!("1. Say Hello. Don't do anything. Check responsivenes.");
-        println!("2. Test IbAPI: historical data");
-        println!("3. Test IbAPI: trade");
-        println!("4. FastRunner: Test HttpDownload");
-        println!("5. FastRunner loop: Start");
-        println!("6. FastRunner loop: Stop");
-        println!("8. TaskScheduler: Show next trigger times.");
-        println!("9. Exit gracefully (Avoid Ctrl-^C).");
-        std::io::stdout().flush().unwrap(); // Flush to ensure prompt is shown
+        println!("1) Say Hello. Don't do anything. Check responsivenes.");
+        println!("2) Show runtime info");
+        println!("3) Test: tokio::spawn() background async task in main runtime");
+        println!("4) Test IbAPI: historical data");
+        println!("5) Test IbAPI: trade");
+        println!("6) FastRunner: Test HttpDownload");
+        println!("7) FastRunner loop: Start");
+        println!("8) FastRunner loop: Stop");
+        println!("9) TaskScheduler: Show next trigger times.");
+        println!("10) Stop server and exit gracefully (Avoid Ctrl-^C).");
+        print!("Choice: ");
+        // flush stdout (small blocking is fine here)
+        use std::io::Write;
+        let _ = std::io::stdout().flush(); // Flush to ensure prompt is shown
 
-        let mut input = String::new();
-        match io::stdin().read_line(&mut input) {
-            Ok(_) => {
-                match input.trim() {
-                    "1" => {
+        let line = match lines.next_line().await {
+            Ok(Some(line)) => line,
+            _ => {
+                println!("stdin closed, exiting menu.");
+                break;
+            }
+        };
+
+        match line.trim() {
+            "1" => {
                         println!("Hello. I am not crashed yet! :)");
                     }
-                    "2" => {
-                        test_ibapi_hist_data().await;
-                    }
-                    "3" => {
-                        test_ibapi_trade().await;
-                    }
-                    "4" => {
-                        fast_runner.test_http_download().await;
-                    }
-                    "5" => {
-                        fast_runner.start_fastrunning_loop().await;
-                    }
-                    "6" => {
-                        fast_runner.stop_fastrunning_loop().await;
-                    }
-                    "8" => {
-                        RQ_TASK_SCHEDULER.print_next_trigger_times();
-                    }
-                    "9" => {
-                        println!("Exiting gracefully...");
-                        break;
-                    }
-                    _ => {
-                        println!("Invalid choice. Please try again.");
-                    }
-                }
+            "2" => {
+                print_runtime_info(&runtime_info);
             }
-            Err(e) => {
-                println!("Input error: {}. Exiting gracefully...", e);
+            "3" => {
+                println!("Spawning background async task...");
+                tokio::spawn(async {
+                    loop {
+                        println!("[task] running...");
+                        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                    }
+                });
+            }
+            "4" => {
+                test_ibapi_hist_data().await;
+            }
+            "5" => {
+                test_ibapi_trade().await;
+            }
+            "6" => {
+                fast_runner.test_http_download().await;
+            }
+            "7" => {
+                fast_runner.start_fastrunning_loop().await;
+            }
+            "8" => {
+                fast_runner.stop_fastrunning_loop().await;
+            },
+            "9" => {
+                RQ_TASK_SCHEDULER.print_next_trigger_times();
+            }
+            "10" => {
+                println!("Stopping server...");
+                server_handle.stop(false).await;
                 break;
+            }
+            other => {
+                println!("Unknown choice: {other}");
             }
         }
     }
 }
+
+fn print_runtime_info(info: &RuntimeInfo) {
+    println!();
+    println!("=== Runtime Info ===");
+    println!("Process ID:         {}", info.pid);
+    println!("Logical CPUs:       {}", info.logical_cpus);
+    println!("Actix workers:      {}", info.server_workers);
+    println!("(Tokio worker pool ≈ logical CPUs, unless you customized it)");
+}
+
 
 async fn test_ibapi_hist_data() {
     // Use the async (default): Non-blocking client, and not the sync: Blocking client.
@@ -327,11 +360,18 @@ async fn test_ibapi_hist_data() {
 }
 
 async fn test_ibapi_trade() {
-    let gateways = RQ_BROKERS_WATCHER.gateways.lock().unwrap();
-    let ib_client_guard = gateways[0].lock().unwrap();  // 0 is dcmain, 1 is gyantal
-    let ib_client_dcmain = ib_client_guard.ib_client.as_ref().unwrap();
-
     let contract = Contract::stock("PM").build();
+
+    let ib_client_dcmain = { // 0 is dcmain, 1 is gyantal
+            let gateways = RQ_BROKERS_WATCHER.gateways.lock().unwrap();
+            gateways[0]
+                .lock()
+                .unwrap()
+                .ib_client
+                .as_ref()
+                .cloned()
+                .expect("ib_client is not initialized")
+        };
 
     // ib_client_gyantal: Error: Parse(5, "Invalid Real-time Query:No market data permissions for NYSE STK. Requested market data requires additional subscription for API. See link in 'Market Data Connections' dialog for more details."
     let mut subscription = ib_client_dcmain
@@ -357,7 +397,20 @@ async fn test_ibapi_trade() {
     // println!("Order submitted with ID: {}", order_id);
 }
 
-#[actix_web::main] // or #[tokio::main]
+struct RuntimeInfo {
+    logical_cpus: usize,
+    server_workers: usize,
+    pid: u32,
+}
+
+// To be able to spawn tokio:spawn() worker tasks in the console menu (it cannot be blocking), 
+// keep everything inside the Tokio/Actix runtime and make the console menu itself async.
+// ! Create new OS threads with thread::spawn() Only VERY rarely for CPU-bound tasks when you don't want to wait for the ThreadPool delegation. 
+// We have 2*nCores = 2*12 or 2*16 = 24..32 worker threads on the ThreadPool already. Plenty. They are instantly available.
+// Note that RQ_BROKERS_WATCHER's ib-clients are bound to the main tokio runtime that created them.
+// So, you will not be able to use RQ_BROKERS_WATCHER's ib-clients in those new OS threads. 
+// Although you can create new ib-clients inside the new OS thread with new connectionID. (usually, it is not worth it)
+#[actix_web::main]
 async fn main() -> std::io::Result<()> {
     init_log().expect("Failed to initialize logging");
     info!("***Starting RqCoreSrv...");
@@ -369,8 +422,29 @@ async fn main() -> std::io::Result<()> {
     RQ_TASK_SCHEDULER.schedule_task(Arc::new(FastRunnerTask::new()));
     RQ_TASK_SCHEDULER.start();
 
-    actix_websrv_run();
-    display_console_menu().await;
+    // Detect CPU count
+    let logical_cpus = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(1);
+
+    // You can choose a different worker count if you like; on a 12 Core / 24 Thread machine, 24 workers is probably overkill, but fine.
+    let server_workers = logical_cpus;
+
+    let runtime_info = Arc::new(RuntimeInfo {
+        logical_cpus,
+        server_workers,
+        pid: std::process::id(),
+    });
+
+    let (server, server_handle) = actix_websrv_run(runtime_info.clone(), server_workers)?;
+
+    // Spawn async console menu INSIDE the Tokio runtime
+    tokio::spawn(async move {
+        console_menu_loop(server_handle, runtime_info).await;
+    });
+
+    // Keep server running
+    let _server_result = server.await; // this `Result` may be an `Err` variant, which should be handled
 
     RQ_BROKERS_WATCHER.exit().await;
     log::info!("END RqCoreSrv"); // The OS will clean up the log file handles and flush the file when the process exits

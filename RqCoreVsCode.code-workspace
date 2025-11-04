@@ -1,12 +1,12 @@
 {
-	"folders": [
-		{
-			"path": "."
-		}
-	],
-	"settings": {
-		"rust-analyzer.linkedProjects": [
-			"./src/rqcoresrv/Cargo.toml"
-		]
-	}
+    "folders": [
+        {
+            "path": "."
+        }
+    ],
+    "settings": {
+        "rust-analyzer.linkedProjects": [
+            "./src/rqcoresrv/Cargo.toml"
+        ]
+    }
 }

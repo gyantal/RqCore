@@ -1,8 +1,6 @@
 use std::path::{Path, PathBuf} ;
 use std::collections::HashMap;
-use std::{thread};
 use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
-use actix_web::{rt::System};
 use chrono::{Local, Utc};
 use chrono::Datelike;
 use serde::Deserialize;
@@ -116,12 +114,12 @@ pub struct StockAttributes {
 #[allow(dead_code)]
 pub struct TransactionEvent {
     pub transaction_id: String,
-	pub action_date: String,
-	pub ticker: String, // this is StockAttributes.name
-	pub company_name: String,
-	pub starting_weight: Option<Weight>,
-	pub new_weight: Option<Weight>,
-	pub price: Option<String>,
+    pub action_date: String,
+    pub ticker: String, // this is StockAttributes.name
+    pub company_name: String,
+    pub starting_weight: Option<Weight>,
+    pub new_weight: Option<Weight>,
+    pub price: Option<String>,
     pub pos_weight: f32, // calculated position weight in percentage (0.0 to 100.0)
     pub pos_market_value: f64, // calculated position market value in USD
 }
@@ -366,9 +364,19 @@ impl FastRunner {
         self.determine_position_market_values_gyantal(&mut new_buy_events, &mut new_sell_events); // replace it to blukucz if needed
 
         // Acquire and clone the ib_client handle (Arc<Client>) without holding locks across await
-        let ib_client = {
+        let ib_client = { // 0 is dcmain, 1 is gyantal
             let gateways = RQ_BROKERS_WATCHER.gateways.lock().unwrap();
             gateways[1]
+                .lock()
+                .unwrap()
+                .ib_client
+                .as_ref()
+                .cloned()
+                .expect("ib_client is not initialized")
+        };
+        let ib_client_dcmain = { // 0 is dcmain, 1 is gyantal
+            let gateways = RQ_BROKERS_WATCHER.gateways.lock().unwrap();
+            gateways[0]
                 .lock()
                 .unwrap()
                 .ib_client
@@ -385,15 +393,32 @@ impl FastRunner {
         println!("Process New BUYS ({}):", new_buy_events.len());
         for event in &new_buy_events {
             println!("  {} ({}, ${}, ${}) , ", event.ticker, event.company_name, event.price.as_deref().unwrap_or("N/A"), event.pos_market_value);
+            let contract = Contract::stock(&event.ticker).build();
 
-            if event.price.is_none()
+            if event.price.is_none() { // typical for new stocks that Price/Share column is "Scheduled"
+                // ib_client_gyantal: Error: Parse(5, "Invalid Real-time Query:No market data permissions for NYSE STK. Requested market data requires additional subscription for API. See link in 'Market Data Connections' dialog for more details."
+                println!("  {} ({}, waiting for real-time bar 0...) , ", event.ticker, event.company_name);
+                let mut subscription = ib_client_dcmain
+                    .realtime_bars(&contract, RealtimeBarSize::Sec5, RealtimeWhatToShow::Trades, TradingHours::Regular).await
+                    .expect("realtime bars request failed!");
+
+                println!("  {} ({}, waiting for real-time bar...) , ", event.ticker, event.company_name);
+                while let Some(bar_result) = subscription.next().await {
+                    match bar_result {
+                        Ok(bar) => println!("{bar:?}"),
+                        Err(e) => eprintln!("Error: {e:?}"),
+                    }
+                    break; // just 1 bar for testing, otherwise it would block here forever
+                }
+            }
+
+            if event.price.is_none() // If no price, we cannot calculate nShares, not even MKT orders possible
                 { continue;}
             let price_str = event.price.as_ref().unwrap();
             if price_str.parse::<f64>().is_err()
                 { continue;}
             let price = price_str.parse::<f64>().unwrap();
             let num_shares = (event.pos_market_value / price).floor() as i32;
-            let contract = Contract::stock(&event.ticker).build();
             println!("  {} ({}, nShares: {}) , ", event.ticker, event.company_name, num_shares);
 
             if self.is_simulation // prevent trade in simulation mode
@@ -442,30 +467,23 @@ impl FastRunner {
         self.is_loop_active.store(true, Ordering::SeqCst);
         let is_loop_active_clone = self.is_loop_active.clone(); // Clone the Arc, not the AtomicBool
 
-        // tried to use tokio::spawn or actix_web::rt::spawn to start a task on the ThreadPool, but had problems that they were not called, because
-        // the current thread is the ConsoleMenu main thread, and I never return from this thread. It should have worked though.
-        // After 6 hours, I gave up and spawn a new OS thread here. 
-        // The good side is that this new OS thread can process CPU-bound tasks faster than waiting for the ThreadPool delegation
-        thread::spawn(move || {
-            println!("FastRunner thread started");
-            let sys = System::new(); // actix_web::rt::System to be able to use async in this new OS thread
-            sys.block_on(async {
-                let mut fast_runner2 = FastRunner::new(); // fake another instance, because self cannot be used, because it will be out of scope after this function returns
+        tokio::spawn(async move { // to force the async block to take ownership of `is_loop_active_clone` (and any other referenced variables), use the `move` keyword
+            println!("FastRunner task started");
+            let mut fast_runner2 = FastRunner::new(); // fake another instance, because self cannot be used, because it will be out of scope after this function returns
 
-                while is_loop_active_clone.load(Ordering::SeqCst) {
-                    println!(">* Loop iteration");
+            while is_loop_active_clone.load(Ordering::SeqCst) {
+                println!(">* Loop iteration");
 
-                    fast_runner2.fastrunning_loop_impl().await;
+                fast_runner2.fastrunning_loop_impl().await;
 
-                    if fast_runner2.has_trading_ever_started {
-                        println!("Trading has started, exiting the loop.");
-                        break;
-                    }
-
-                    tokio::time::sleep(tokio::time::Duration::from_millis(if fast_runner2.is_simulation { fast_runner2.loop_sleep_ms_simulation } else { fast_runner2.loop_sleep_ms_realtrading })).await;
+                if fast_runner2.has_trading_ever_started {
+                    println!("Trading has started, exiting the loop.");
+                    break;
                 }
-                println!("FastRunner thread stopping");
-            });
+
+                tokio::time::sleep(tokio::time::Duration::from_millis(if fast_runner2.is_simulation { fast_runner2.loop_sleep_ms_simulation } else { fast_runner2.loop_sleep_ms_realtrading })).await;
+            }
+            println!("FastRunner thread stopping");
         });
     }
 
