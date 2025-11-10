@@ -23,7 +23,7 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 
 # ibapi: Async only (default features)
-ibapi = "2.0"
+ibapi = "2.1.0"
 # Async + blocking together
 # ibapi = { version = "2.0", default-features = false, features = ["sync", "async"] }
 

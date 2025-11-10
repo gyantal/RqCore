@@ -130,8 +130,14 @@ impl RqTask for FastRunnerTask {
                 fast_runner.is_simulation = !is_live_trading;
                 // fast_runner.start_fastrunning_loop().await; // don't call this, because that will create a new Fastrunner instance and start its own loop
                 
-                let deadline = tokio::time::Instant::now() + tokio::time::Duration::from_secs(4 * 60 + 30);
-                while tokio::time::Instant::now() < deadline { // if the loop runs more than 4 minutes 30 seconds, then finish the loop
+
+                let loop_endtime = tokio::time::Instant::now()
+                    + if is_live_trading {
+                        tokio::time::Duration::from_secs(4 * 60 + 30)
+                    } else {
+                        tokio::time::Duration::from_secs(30)
+                    };
+                while tokio::time::Instant::now() < loop_endtime { // if the loop runs more than 4 minutes 30 seconds, then finish the loop
                     println!(">* FastRunnerTask run(): Loop iteration (IsSimu:{})", fast_runner.is_simulation);
 
                     fast_runner.fastrunning_loop_impl().await;

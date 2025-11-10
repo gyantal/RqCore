@@ -204,10 +204,10 @@ impl FastRunner {
         
         if body_text.len() < 1000 {
             if body_text.contains("Subscription is required") {
-                println!("No permission, Update cookie file."); // we don't have to terminate the infinite Loop. The admin can update the cookie file and the next iteration will notice it.
+                println!("!Error. No permission, Update cookie file."); // we don't have to terminate the infinite Loop. The admin can update the cookie file and the next iteration will notice it.
                 return (target_action_date.to_string(), Vec::new(), Vec::new());
             } else if body_text.contains("captcha.js") {
-                println!("Captcha required, Update cookie file AND handle Captcha in browser."); // we don't have to terminate the infinite Loop. The admin can update the cookie file and the next iteration will notice it.
+                println!("!Error. Captcha required, Update cookie file AND handle Captcha in browser."); // we don't have to terminate the infinite Loop. The admin can update the cookie file and the next iteration will notice it.
                 return (target_action_date.to_string(), Vec::new(), Vec::new());
             }
         }
@@ -308,8 +308,8 @@ impl FastRunner {
     }
 
     fn determine_position_market_values_gyantal(&self, new_buy_events: &mut Vec<TransactionEvent>, new_sell_events: &mut Vec<TransactionEvent>) {
-        let buy_pv = 10000.0; // PV for buys
-        let sell_pv = 5000.0; // PV for sells
+        let buy_pv = 20000.0; // PV for buys
+        let sell_pv = 10000.0; // PV for sells
 
         let buy_pos_mkt_value = buy_pv / (new_buy_events.len() as f64);
         let sell_pos_mkt_value = sell_pv / (new_sell_events.len() as f64);
@@ -349,8 +349,8 @@ impl FastRunner {
             println!("No new buy/sell events on {}. Skipping trading.", target_action_date);
             return;
         }
-        if num_new_events > 12 { // The most it was 5+5 = 10 trades in the past.
-            println!("Something is wrong. Don't expect more than 10 events. num_new_events: {}. Skipping trading.", num_new_events);
+        if num_new_events > 14 { // The most it was 7+7 = 14 trades in the past. And even if it is correct, if there are 8 buys and 8 sells, a lot of trading that I don't want. As in this spread out suggestion, the buying pressure is not that big.
+            println!("Something is wrong. Don't expect more than 14 events. num_new_events: {}. Skipping trading.", num_new_events);
             return;
         }
 
