@@ -364,7 +364,7 @@ impl FastRunner {
         self.determine_position_market_values_gyantal(&mut new_buy_events, &mut new_sell_events); // replace it to blukucz if needed
 
         // Acquire and clone the ib_client handle (Arc<Client>) without holding locks across await
-        let ib_client = { // 0 is dcmain, 1 is gyantal
+        let ib_client_gyantal = { // 0 is dcmain, 1 is gyantal
             let gateways = RQ_BROKERS_WATCHER.gateways.lock().unwrap();
             gateways[1]
                 .lock()
@@ -405,7 +405,7 @@ impl FastRunner {
 
             if self.is_simulation // prevent trade in simulation mode
                 { continue;}
-            let order_id = ib_client.order(&contract)
+            let order_id = ib_client_gyantal.order(&contract)
                 .buy(num_shares)
                 // .market()
                 .limit(price * 1.20) // Limit buy order at 20% above the last day close price
@@ -430,7 +430,7 @@ impl FastRunner {
 
             if self.is_simulation // prevent trade in simulation mode
                 { continue;}
-            let order_id = ib_client.order(&contract)
+            let order_id = ib_client_gyantal.order(&contract)
                 .sell(num_shares)
                 //.market()
                 .limit(price * 0.85) // Limit sell order at -15% below the last day close price

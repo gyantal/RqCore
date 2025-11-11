@@ -334,13 +334,23 @@ async fn test_ibapi_hist_data() {
     // Choose async, realtime bars streaming is only available in async. We might want to stream and check 200 tickers at the same time.
     // The sync version just polls 1 snapshot realtime value.
     // let connection_url_dcmain = "34.251.1.119:7303"; // port info is fine here. OK. Temporary anyway, and login is impossible, because there are 2 firewalls with source-IP check: AwsVm, IbTWS
-    let connection_url_gyantal = "34.251.1.119:7301";
-    let client = Client::connect(connection_url_gyantal, 99).await.expect("connection to TWS failed!");
+    // let connection_url_gyantal = "34.251.1.119:7301";
+    // let client = Client::connect(connection_url_gyantal, 99).await.expect("connection to TWS failed!");
+    let ib_client_gyantal = { // 0 is dcmain, 1 is gyantal
+        let gateways = RQ_BROKERS_WATCHER.gateways.lock().unwrap();
+        gateways[1]
+            .lock()
+            .unwrap()
+            .ib_client
+            .as_ref()
+            .cloned()
+            .expect("ib_client is not initialized")
+    };
     println!("Successfully connected to TWS");
 
     let contract = Contract::stock("AAPL").build();
 
-    let historical_data = client
+    let historical_data = ib_client_gyantal
         .historical_data(
             &contract,
             Some(datetime!(2023-04-11 20:00 UTC)),
