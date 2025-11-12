@@ -233,7 +233,8 @@ impl FastRunner {
     pub async fn get_new_buys_sells_pqp(&mut self) -> (String, Vec<TransactionEvent>, Vec<TransactionEvent>) {
         println!(">* get_new_buys_sells_pqp() started.");
 
-        // Calculate target_action_date from the current date (last Monday). TODO: This can be a problem if Monday is a stock market holiday. We will miss that date. But OK for now.
+        // Calculate target_action_date from the current date (last Monday).
+        // TODO: This can be a problem if Monday is a stock market holiday. We will miss that date. But OK for now.
         let current_date = Utc::now().date_naive();
         let days_to_subtract = current_date.weekday().num_days_from_monday() as i64;
         let real_rebalance_date = current_date - chrono::Duration::days(days_to_subtract);
@@ -548,6 +549,7 @@ impl FastRunner {
             chrono::Weekday::Sun => virtual_rebalance_date + chrono::Duration::days(1),
             _ => virtual_rebalance_date,
         };
+        // TODO: This can be a problem if Monday is a stock market holiday. We will miss that date. But OK for now.
         let target_action_date = real_rebalance_date.format("%Y-%m-%d").to_string();
         // let target_action_date = "2025-11-03".to_string(); // AP: 1st or 15th day of the month, or the closest trading day after it.
 
@@ -637,20 +639,23 @@ impl FastRunner {
             // For AP, we consider all primary tickers as "buy" events
             if let Some(rel) = &article.relationships.primary_tickers {
                 for d in &rel.data {
-                    if d.type_ == "tag" {
-                        if let Some((name, company)) = tag_lookup.get(&d.id) {
-                            new_buy_events.push(TransactionEvent {
-                                transaction_id: article.id.clone(),
-                                action_date: publish_on_dateonly.to_string(),
-                                ticker: name.clone(),
-                                company_name: company.clone(),
-                                starting_weight: None,
-                                new_weight: None,
-                                price: None,
-                                pos_weight: 0.0,
-                                pos_market_value: 0.0,
-                            });
-                        }
+                    if d.type_ != "tag"
+                        { continue; }
+                    if let Some((name, company)) = tag_lookup.get(&d.id) {
+                        // name can be a non USA (Canada) stock ticker, e.g. ""name": "CLS:CA". If name contains ':', we skip it
+                        if name.contains(':')
+                            { continue; }
+                        new_buy_events.push(TransactionEvent {
+                            transaction_id: article.id.clone(),
+                            action_date: publish_on_dateonly.to_string(),
+                            ticker: name.clone(),
+                            company_name: company.clone(),
+                            starting_weight: None,
+                            new_weight: None,
+                            price: None,
+                            pos_weight: 0.0,
+                            pos_market_value: 0.0,
+                        });
                     }
                 }
             }
