@@ -256,9 +256,10 @@ async fn console_menu_loop(server_handle: ServerHandle, runtime_info: Arc<Runtim
         println!("41) Test: tokio::spawn() background async task in main runtime");
         println!("42) Test IbAPI: historical data");
         println!("43) Test IbAPI: trade");
-        println!("51) FastRunner: Test HttpDownload");
-        println!("52) FastRunner loop: Start");
-        println!("53) FastRunner loop: Stop");
+        println!("51) FastRunner PQP: Test HttpDownload");
+        println!("52) FastRunner PQP: Loop Start");
+        println!("53) FastRunner PQP: Loop Stop");
+        println!("54) FastRunner AP: Test HttpDownload");
         println!("9) Stop server and exit gracefully (Avoid Ctrl-^C).");
         print!("Choice: ");
         // flush stdout (small blocking is fine here)
@@ -299,7 +300,7 @@ async fn console_menu_loop(server_handle: ServerHandle, runtime_info: Arc<Runtim
                 test_ibapi_trade().await;
             }
             "51" => {
-                fast_runner.test_http_download().await;
+                fast_runner.test_http_download_pqp().await;
             }
             "52" => {
                 fast_runner.start_fastrunning_loop().await;
@@ -307,6 +308,9 @@ async fn console_menu_loop(server_handle: ServerHandle, runtime_info: Arc<Runtim
             "53" => {
                 fast_runner.stop_fastrunning_loop().await;
             },
+            "54" => {
+                fast_runner.test_http_download_ap().await;
+            }
             "9" => {
                 println!("Stopping server...");
                 server_handle.stop(false).await;
