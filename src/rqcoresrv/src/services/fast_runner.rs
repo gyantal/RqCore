@@ -124,6 +124,67 @@ pub struct TransactionEvent {
     pub pos_market_value: f64, // calculated position market value in USD
 }
 
+    // ---------- Alpha Picks (AP) minimal model from JSON ----------
+    #[derive(Debug, Deserialize)]
+    pub struct ApResponse {
+        pub data: Vec<Article>,
+        pub included: Vec<IncludedItem>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[allow(dead_code)]
+    pub struct Article {
+        pub id: String,
+        #[serde(rename = "type")]
+        pub type_: String,
+        pub attributes: ArticleAttributes,
+        pub relationships: ArticleRelationships,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[allow(dead_code)]
+    pub struct ArticleAttributes {
+        #[serde(rename = "publishOn")]
+        pub publish_on: String,
+        pub title: String,
+    }
+
+    #[derive(Debug, Deserialize)]
+    pub struct ArticleRelationships {
+        #[serde(rename = "primaryTickers")]
+        pub primary_tickers: Option<RelationshipArray>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    pub struct RelationshipArray {
+        pub data: Vec<RelationshipData>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    pub struct RelationshipData {
+        pub id: String,
+        #[serde(rename = "type")]
+        pub type_: String,
+    }
+
+    #[derive(Debug, Deserialize)]
+    pub struct IncludedItem {
+        pub id: String,
+        #[serde(rename = "type")]
+        pub type_: String,
+        // We only care about tags; keep attributes generic to avoid many structs
+        pub attributes: serde_json::Value,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[allow(dead_code)]
+    pub struct TagAttributes {
+        pub slug: Option<String>,
+        pub name: Option<String>,
+        pub company: Option<String>,
+    }
+
+
 
 pub struct FastRunner {
     pub is_simulation: bool, // is true for simulation, false for real trading
@@ -175,8 +236,8 @@ impl FastRunner {
         // Calculate target_action_date from the current date (last Monday). TODO: This can be a problem if Monday is a stock market holiday. We will miss that date. But OK for now.
         let current_date = Utc::now().date_naive();
         let days_to_subtract = current_date.weekday().num_days_from_monday() as i64;
-        let target_action_date_naive = current_date - chrono::Duration::days(days_to_subtract);
-        let target_action_date = target_action_date_naive.format("%Y-%m-%d").to_string();
+        let real_rebalance_date = current_date - chrono::Duration::days(days_to_subtract);
+        let target_action_date = real_rebalance_date.format("%Y-%m-%d").to_string();
         // let target_action_date = "2025-11-03".to_string(); // Monday date
 
         benchmark_elapsed_time("ensure_cookies_loaded()", || {  // 300us first, 70us later
@@ -473,15 +534,22 @@ impl FastRunner {
         self.is_loop_active.store(false, Ordering::SeqCst);
     }
 
-    pub async fn get_new_buys_sells_ap(&mut self) -> String {
+    pub async fn get_new_buys_sells_ap(&mut self) -> (String, Vec<TransactionEvent>) {
         println!(">* get_new_buys_sells_ap() started.");
 
-        // Calculate target_action_date from the current date (last Monday). TODO: This can be a problem if Monday is a stock market holiday. We will miss that date. But OK for now.
         let current_date = Utc::now().date_naive();
-        let days_to_subtract = current_date.weekday().num_days_from_monday() as i64;
-        let target_action_date_naive = current_date - chrono::Duration::days(days_to_subtract);
-        let target_action_date = target_action_date_naive.format("%Y-%m-%d").to_string();
-        // let target_action_date = "2025-11-03".to_string(); // Monday date
+        let virtual_rebalance_date = if current_date.day() >= 15 { // virtual_rebalance_date as the last 1st or 15th of month before or equal to today
+            current_date.with_day(15).unwrap()
+        } else {
+            current_date.with_day(1).unwrap()
+        };
+        let real_rebalance_date = match virtual_rebalance_date.weekday() { // real_rebalance_date as virtual_rebalance_date or the first weekday after it if it falls on a weekend
+            chrono::Weekday::Sat => virtual_rebalance_date + chrono::Duration::days(2),
+            chrono::Weekday::Sun => virtual_rebalance_date + chrono::Duration::days(1),
+            _ => virtual_rebalance_date,
+        };
+        let target_action_date = real_rebalance_date.format("%Y-%m-%d").to_string();
+        // let target_action_date = "2025-11-03".to_string(); // AP: 1st or 15th day of the month, or the closest trading day after it.
 
         benchmark_elapsed_time("ensure_cookies_loaded()", || {  // 300us first, 70us later
             self.ensure_cookies_loaded(); // cookies are reloaded from file only if needed, if the file changed.
@@ -516,121 +584,92 @@ impl FastRunner {
 
         if !body_text.contains("\"isPaywalled\":false") { // Search ""isPaywalled":false". If it can be found, then it is good. Otherwise, we get the articles, but the primaryTickers will be empty.
             println!("!Error. No permission, Update cookie file."); // we don't have to terminate the infinite Loop. The admin can update the cookie file and the next iteration will notice it.
-            // return (target_action_date.to_string(), Vec::new(), Vec::new());
-            return target_action_date.to_string();
+            return (target_action_date.to_string(), Vec::new());
         } else if body_text.contains("captcha.js") {
             println!("!Error. Captcha required, Update cookie file AND handle Captcha in browser."); // we don't have to terminate the infinite Loop. The admin can update the cookie file and the next iteration will notice it.
-            // return (target_action_date.to_string(), Vec::new(), Vec::new());
-            return target_action_date.to_string();
+            return (target_action_date.to_string(), Vec::new());
         }
-        
 
-        
-        // // Parse saved text as JSON
-        // let api_response: ApiResponse = serde_json::from_str(&body_text).expect("serde_json::from_str() failed!");
-        
-        // // Extract transactions list (Vec<Transaction>)
-        // let transactions = api_response.data;
-        
-        // // Extract stocks dictionary (HashMap<String, Stock>)
-        // let mut stocks: HashMap<String, Stock> = HashMap::new();
-        // for stock in api_response.included {
-        //     stocks.insert(stock.id.clone(), stock);
+        // Parse saved text as JSON
+        let ap_response: ApResponse = serde_json::from_str(&body_text).expect("serde_json::from_str() failed for ApResponse!");
+
+        // Build a lookup for included tag items: id -> (name, company)
+        let mut tag_lookup: HashMap<String, (String, String)> = HashMap::new();
+        for inc in &ap_response.included {
+            if inc.type_ == "tag" {
+                if let Ok(tag_attr) = serde_json::from_value::<TagAttributes>(inc.attributes.clone()) {
+                    let name = tag_attr.name.unwrap_or_default();
+                    let company = tag_attr.company.unwrap_or_default();
+                    tag_lookup.insert(inc.id.clone(), (name, company));
+                }
+            }
+        }
+
+        // Print each article with its primary ticker names and companies
+        // for art in &ap_response.data {
+        //     let publish_on = &art.attributes.publish_on;
+
+        //     let mut tickers: Vec<String> = Vec::new();
+        //     if let Some(rel) = &art.relationships.primary_tickers {
+        //         for d in &rel.data {
+        //             if d.type_ == "tag" {
+        //                 if let Some((name, company)) = tag_lookup.get(&d.id) {
+        //                     tickers.push(format!("{} ({})", name, company));
+        //                 } else {
+        //                     tickers.push(format!("{} (unknown)", d.id));
+        //                 }
+        //             }
+        //         }
+        //     }
+
+        //     let tickers_str = if tickers.is_empty() { "-".to_string() } else { tickers.join(", ") };
+        //     println!("AP Article: {} | {} | primary_tickers: {}", art.attributes.title, publish_on, tickers_str);
         // }
 
-        // println!("Found {} transactions, {} stocks", transactions.len(), stocks.len());
-        // // Print first transaction example
-        // // if let Some(first_tx) = transactions.first() {
-        // //     println!("First transaction: id={}, action={}, price={:?}, tickerId={}", 
-        // //         first_tx.attributes.id, 
-        // //         first_tx.attributes.action, 
-        // //         first_tx.attributes.price,
-        // //         first_tx.relationships.ticker.data.id
-        // //     );
-        // // }
+        // Collect buys for the specific date. The Article tabpage only contains buy events for PQP anyway. For AP, 1st, 15th monthly articles only contain buys. Sell comes sporadically intra-month.
+        let mut new_buy_events: Vec<TransactionEvent> = Vec::new();
+        for article in &ap_response.data {
+            let publish_on = &article.attributes.publish_on; // 2025-10-15T12:00:23-04:00
+            let publish_on_dateonly = &publish_on[0..10]; // extract "2025-10-15"
+            if publish_on_dateonly != target_action_date { // Skip if not our target date
+                continue;
+            }
+            // For AP, we consider all primary tickers as "buy" events
+            if let Some(rel) = &article.relationships.primary_tickers {
+                for d in &rel.data {
+                    if d.type_ == "tag" {
+                        if let Some((name, company)) = tag_lookup.get(&d.id) {
+                            new_buy_events.push(TransactionEvent {
+                                transaction_id: article.id.clone(),
+                                action_date: publish_on_dateonly.to_string(),
+                                ticker: name.clone(),
+                                company_name: company.clone(),
+                                starting_weight: None,
+                                new_weight: None,
+                                price: None,
+                                pos_weight: 0.0,
+                                pos_market_value: 0.0,
+                            });
+                        }
+                    }
+                }
+            }
+        }
 
-        // // Print all transactions
-        // // for transaction in &transactions {
-        // //     let ticker_id = &transaction.relationships.ticker.data.id;
-        // //     if let Some(stock) = stocks.get(ticker_id) {
-        // //         println!(
-        // //             "Tr {}: {} {} {} weight of {} ({}) at ${}",
-        // //             transaction.attributes.id,
-        // //             transaction.attributes.actionDate,
-        // //             transaction.attributes.action,
-        // //             transaction.attributes.new_weight,
-        // //             stock.attributes.name,
-        // //             stock.attributes.companyName,
-        // //             transaction.attributes.price.as_deref().unwrap_or("N/A"),
-        // //         );
-        // //     }
-        // // }
-
-        // // Collect buys/sells for the specific date
-        // let mut new_buy_events: Vec<TransactionEvent> = Vec::new();
-        // let mut new_sell_events: Vec<TransactionEvent> = Vec::new();
-        // for transaction in &transactions {
-        //     // Skip if not our target date
-        //     if transaction.attributes.action_date != target_action_date {
-        //         continue;
-        //     }
-        //     // Skip rebalance transactions
-        //     if transaction.attributes.rule.as_deref() == Some("rebalance") {
-        //         continue;
-        //     }
-        //     let stock = stocks.get(&transaction.relationships.ticker.data.id);
-        //     match transaction.attributes.action.as_str() {
-        //         "buy" => if let Some(stock) = stock {
-        //             new_buy_events.push(TransactionEvent {
-        //                 transaction_id: transaction.id.clone(),
-        //                 action_date: transaction.attributes.action_date.clone(),
-        //                 ticker: stock.attributes.name.clone(),
-        //                 company_name: stock.attributes.company_name.clone(),
-        //                 starting_weight: transaction.attributes.starting_weight.clone(),
-        //                 new_weight: transaction.attributes.new_weight.clone(),
-        //                 price: transaction.attributes.price.clone(),
-        //                 pos_weight: 0.0,
-        //                 pos_market_value: 0.0,
-        //             });
-        //         },
-        //         "sell" => if let Some(stock) = stock {
-        //             new_sell_events.push(TransactionEvent {
-        //                 transaction_id: transaction.id.clone(),
-        //                 action_date: transaction.attributes.action_date.clone(),
-        //                 ticker: stock.attributes.name.clone(),
-        //                 company_name: stock.attributes.company_name.clone(),
-        //                 starting_weight: transaction.attributes.starting_weight.clone(),
-        //                 new_weight: transaction.attributes.new_weight.clone(),
-        //                 price: transaction.attributes.price.clone(),
-        //                 pos_weight: 0.0,
-        //                 pos_market_value: 0.0,
-        //             });
-        //         },
-        //         _ => {}
-        //     }
-        // }
-
-        // (target_action_date.to_string(), new_buy_events, new_sell_events)
-        target_action_date.to_string()
+        (target_action_date.to_string(), new_buy_events)
     }
 
     pub async fn test_http_download_ap(&mut self) {
-        // let (target_action_date, new_buy_events, new_sell_events) = self.get_new_buys_sells_pqp().await;
-        let target_action_date = self.get_new_buys_sells_ap().await;
+        let (target_action_date, new_buy_events) = self.get_new_buys_sells_ap().await;
 
-        // // Print summary
+        // Print summary
         println!("On {}, new positions:", target_action_date);
-        // print!("New BUYS ({}):", new_buy_events.len());
-        // for event in &new_buy_events {
-        //     print!("  {} ({}, ${}) , ", event.ticker, event.company_name, event.price.as_deref().unwrap_or("N/A"));
-        // }
-        
-        // print!("\nNew SELLS ({}):", new_sell_events.len());
-        // for event in &new_sell_events {
-        //     print!("  {} ({}, ${}) , ", event.ticker, event.company_name, event.price.as_deref().unwrap_or("N/A"));
-        // }
-        // println!(); // print newline for flushing the buffer. Otherwise the last line may not appear immediately.
-        // // io::stdout().flush().unwrap();  // Ensure immediate output, because it is annoying to wait for newline or buffer full
+        print!("New BUYS ({}):", new_buy_events.len());
+        for event in &new_buy_events {
+            print!("  {} ({}, ${}) , ", event.ticker, event.company_name, event.price.as_deref().unwrap_or("N/A"));
+        }
+        println!(); // print newline for flushing the buffer. Otherwise the last line may not appear immediately.
+        // io::stdout().flush().unwrap();  // Ensure immediate output, because it is annoying to wait for newline or buffer full
     }
 
 }
