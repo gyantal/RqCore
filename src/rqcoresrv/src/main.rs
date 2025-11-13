@@ -20,8 +20,7 @@ use rustls_pemfile;
 use rustls::{ServerConfig};
 
 use crate::broker_common::brokers_watcher::RQ_BROKERS_WATCHER;
-use crate::services::rqtask_scheduler::{FastRunnerTask, RQ_TASK_SCHEDULER};
-use crate::services::rqtask_scheduler::HeartbeatTask;
+use crate::services::rqtask_scheduler::{RQ_TASK_SCHEDULER, HeartbeatTask, FastRunnerPqpTask, FastRunnerApTask};
 
 mod services {
     pub mod rqtask_scheduler;
@@ -303,10 +302,10 @@ async fn console_menu_loop(server_handle: ServerHandle, runtime_info: Arc<Runtim
                 fast_runner.test_http_download_pqp().await;
             }
             "52" => {
-                fast_runner.start_fastrunning_loop().await;
+                fast_runner.start_fastrunning_loop_pqp().await;
             }
             "53" => {
-                fast_runner.stop_fastrunning_loop().await;
+                fast_runner.stop_fastrunning_loop_pqp().await;
             },
             "54" => {
                 fast_runner.test_http_download_ap().await;
@@ -433,7 +432,8 @@ async fn main() -> std::io::Result<()> {
     RQ_BROKERS_WATCHER.init().await;
 
     RQ_TASK_SCHEDULER.schedule_task(Arc::new(HeartbeatTask::new()));
-    RQ_TASK_SCHEDULER.schedule_task(Arc::new(FastRunnerTask::new()));
+    RQ_TASK_SCHEDULER.schedule_task(Arc::new(FastRunnerPqpTask::new()));
+    RQ_TASK_SCHEDULER.schedule_task(Arc::new(FastRunnerApTask::new()));
     RQ_TASK_SCHEDULER.start();
 
     // Detect CPU count

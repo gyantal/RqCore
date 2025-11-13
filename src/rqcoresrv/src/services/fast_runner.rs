@@ -205,7 +205,7 @@ impl FastRunner {
             is_simulation: true, // at trading, change this to false. Also check if IbGateway is in ReadOnly mode.
 
             loop_sleep_ms_simulation: 3750, // usually 3750
-            loop_sleep_ms_realtrading: 500, // usually 500ms (note that reqwest.client.get() is 500-700ms)
+            loop_sleep_ms_realtrading: 400, // usually 400ms (note that reqwest.client.get() is 500-700ms)
             is_loop_active: Arc::new(AtomicBool::new(false)),
             has_trading_ever_started: false,
             // initialize cookies cache
@@ -235,11 +235,12 @@ impl FastRunner {
 
         // Calculate target_action_date from the current date (last Monday).
         // TODO: This can be a problem if Monday is a stock market holiday. We will miss that date. But OK for now.
-        let current_date = Utc::now().date_naive();
-        let days_to_subtract = current_date.weekday().num_days_from_monday() as i64;
-        let real_rebalance_date = current_date - chrono::Duration::days(days_to_subtract);
+        let now_utc = Utc::now().date_naive();
+        let days_to_subtract = now_utc.weekday().num_days_from_monday() as i64;
+        let real_rebalance_date = now_utc - chrono::Duration::days(days_to_subtract);
         let target_action_date = real_rebalance_date.format("%Y-%m-%d").to_string();
         // let target_action_date = "2025-11-03".to_string(); // Monday date
+        println!("target_action_date: {}", target_action_date);
 
         benchmark_elapsed_time("ensure_cookies_loaded()", || {  // 300us first, 70us later
             self.ensure_cookies_loaded(); // cookies are reloaded from file only if needed, if the file changed.
@@ -369,19 +370,6 @@ impl FastRunner {
         (target_action_date.to_string(), new_buy_events, new_sell_events)
     }
 
-    fn determine_position_market_values_pqp_gyantal(&self, new_buy_events: &mut Vec<TransactionEvent>, new_sell_events: &mut Vec<TransactionEvent>) {
-        let buy_pv = 20000.0; // PV for buys
-        let sell_pv = 10000.0; // PV for sells
-
-        let buy_pos_mkt_value = buy_pv / (new_buy_events.len() as f64);
-        let sell_pos_mkt_value = sell_pv / (new_sell_events.len() as f64);
-        for event in new_buy_events.iter_mut() {
-            event.pos_market_value = buy_pos_mkt_value;
-        }
-        for event in new_sell_events.iter_mut() {
-            event.pos_market_value = sell_pos_mkt_value;
-        }
-    }
 
     pub async fn test_http_download_pqp(&mut self) {
         let (target_action_date, new_buy_events, new_sell_events) = self.get_new_buys_sells_pqp().await;
@@ -401,8 +389,21 @@ impl FastRunner {
         // io::stdout().flush().unwrap();  // Ensure immediate output, because it is annoying to wait for newline or buffer full
     }
 
+        fn determine_position_market_values_pqp_gyantal(&self, new_buy_events: &mut Vec<TransactionEvent>, new_sell_events: &mut Vec<TransactionEvent>) {
+        let buy_pv = 20000.0; // PV for buys
+        let sell_pv = 10000.0; // PV for sells
 
-    pub async fn fastrunning_loop_impl(&mut self) {
+        let buy_pos_mkt_value = buy_pv / (new_buy_events.len() as f64);
+        let sell_pos_mkt_value = sell_pv / (new_sell_events.len() as f64);
+        for event in new_buy_events.iter_mut() {
+            event.pos_market_value = buy_pos_mkt_value;
+        }
+        for event in new_sell_events.iter_mut() {
+            event.pos_market_value = sell_pos_mkt_value;
+        }
+    }
+
+    pub async fn fastrunning_loop_pqp_impl(&mut self) {
 
         let (target_action_date, mut new_buy_events, mut new_sell_events) = self.get_new_buys_sells_pqp().await;
 
@@ -505,7 +506,7 @@ impl FastRunner {
         // io::stdout().flush().unwrap();  // Ensure immediate output, because it is annoying to wait for newline or buffer full
     }
 
-    pub async fn start_fastrunning_loop(&mut self) {
+    pub async fn start_fastrunning_loop_pqp(&mut self) {
         println!("start_fastrunning_loop() started.");
         self.is_loop_active.store(true, Ordering::SeqCst);
         let is_loop_active_clone = self.is_loop_active.clone(); // Clone the Arc, not the AtomicBool
@@ -517,7 +518,7 @@ impl FastRunner {
             while is_loop_active_clone.load(Ordering::SeqCst) {
                 println!(">* Loop iteration");
 
-                fast_runner2.fastrunning_loop_impl().await;
+                fast_runner2.fastrunning_loop_pqp_impl().await;
 
                 if fast_runner2.has_trading_ever_started {
                     println!("Trading has started, exiting the loop.");
@@ -530,7 +531,7 @@ impl FastRunner {
         });
     }
 
-    pub async fn stop_fastrunning_loop(&mut self) {
+    pub async fn stop_fastrunning_loop_pqp(&mut self) {
         println!("stop_fastrunning_loop() started.");
         self.is_loop_active.store(false, Ordering::SeqCst);
     }
@@ -538,11 +539,11 @@ impl FastRunner {
     pub async fn get_new_buys_sells_ap(&mut self) -> (String, Vec<TransactionEvent>) {
         println!(">* get_new_buys_sells_ap() started.");
 
-        let current_date = Utc::now().date_naive();
-        let virtual_rebalance_date = if current_date.day() >= 15 { // virtual_rebalance_date as the last 1st or 15th of month before or equal to today
-            current_date.with_day(15).unwrap()
+        let now_utc = Utc::now().date_naive();
+        let virtual_rebalance_date = if now_utc.day() >= 15 { // virtual_rebalance_date as the last 1st or 15th of month before or equal to today
+            now_utc.with_day(15).unwrap()
         } else {
-            current_date.with_day(1).unwrap()
+            now_utc.with_day(1).unwrap()
         };
         let real_rebalance_date = match virtual_rebalance_date.weekday() { // real_rebalance_date as virtual_rebalance_date or the first weekday after it if it falls on a weekend
             chrono::Weekday::Sat => virtual_rebalance_date + chrono::Duration::days(2),
@@ -552,6 +553,7 @@ impl FastRunner {
         // TODO: This can be a problem if Monday is a stock market holiday. We will miss that date. But OK for now.
         let target_action_date = real_rebalance_date.format("%Y-%m-%d").to_string();
         // let target_action_date = "2025-11-03".to_string(); // AP: 1st or 15th day of the month, or the closest trading day after it.
+        println!("target_action_date: {}", target_action_date);
 
         benchmark_elapsed_time("ensure_cookies_loaded()", || {  // 300us first, 70us later
             self.ensure_cookies_loaded(); // cookies are reloaded from file only if needed, if the file changed.
@@ -672,6 +674,94 @@ impl FastRunner {
         print!("New BUYS ({}):", new_buy_events.len());
         for event in &new_buy_events {
             print!("  {} ({}, ${}) , ", event.ticker, event.company_name, event.price.as_deref().unwrap_or("N/A"));
+        }
+        println!(); // print newline for flushing the buffer. Otherwise the last line may not appear immediately.
+        // io::stdout().flush().unwrap();  // Ensure immediate output, because it is annoying to wait for newline or buffer full
+    }
+
+    fn determine_position_market_values_ap_gyantal(&self, new_buy_events: &mut Vec<TransactionEvent>) {
+        let buy_pv = 10000.0; // PV for buys
+
+        let buy_pos_mkt_value = buy_pv / (new_buy_events.len() as f64);
+        for event in new_buy_events.iter_mut() {
+            event.pos_market_value = buy_pos_mkt_value;
+        }
+    }
+
+    
+    pub async fn fastrunning_loop_ap_impl(&mut self) {
+
+        let (target_action_date, mut new_buy_events) = self.get_new_buys_sells_ap().await;
+
+        let num_new_events = new_buy_events.len();
+        if num_new_events == 0 {
+            println!("No new buy/sell events on {}. Skipping trading.", target_action_date);
+            return;
+        }
+        if num_new_events > 2 { // There should be 1 new buy per rebalance.
+            println!("Something is wrong. Don't expect more than 1-2 events. num_new_events: {}. Skipping trading.", num_new_events);
+            return;
+        }
+
+        // If we are here, there are events to trade. Assure that we trade only once.
+        if self.has_trading_ever_started { // Assure that Trading only happens once per FastRunner instance. To avoid trading it many times.
+            println!("Trading already started. Skipping this iteration.");
+            return;
+        }
+        self.has_trading_ever_started = true;
+
+        self.determine_position_market_values_ap_gyantal(&mut new_buy_events); // replace it to blukucz if needed
+
+        // Acquire and clone the ib_client handle (Arc<Client>) without holding locks across await
+        let ib_client_gyantal = { // 0 is dcmain, 1 is gyantal
+            let gateways = RQ_BROKERS_WATCHER.gateways.lock().unwrap();
+            gateways[1]
+                .lock()
+                .unwrap()
+                .ib_client
+                .as_ref()
+                .cloned()
+                .expect("ib_client is not initialized")
+        };
+        let ib_client_dcmain = { // 0 is dcmain, 1 is gyantal
+            let gateways = RQ_BROKERS_WATCHER.gateways.lock().unwrap();
+            gateways[0]
+                .lock()
+                .unwrap()
+                .ib_client
+                .as_ref()
+                .cloned()
+                .expect("ib_client is not initialized")
+        };
+
+        // This will do a real trade. To prevent trade happening you have 3 options.
+        // 1. Comment out ib_client.order() (for both Buy/Sell) Just comment it back in when you want to trade.
+        // 2. Another option to prevent trade:self.is_simulation bool is true by default.
+        // 3.Another option to prevent trade: is in IbGateway settings, check in "ReadOnly API", that will prevent the trades.
+        println!("Loop: On {}, new positions:", target_action_date);
+        println!("Process New BUYS ({}):", new_buy_events.len());
+        for event in &new_buy_events {
+            println!("  {} ({}, ${}, ${}, event)", event.ticker, event.company_name, event.price.as_deref().unwrap_or("N/A"), event.pos_market_value);
+            let contract = Contract::stock(&event.ticker).build();
+            let price = get_price(&ib_client_dcmain, event, &contract).await;
+            if price.is_nan() {  // If no price, we cannot calculate nShares, not even MKT orders possible
+                println!("  {} ({}, cannot determine price, skipping...)", event.ticker, event.company_name);
+                continue;
+            }
+
+            let num_shares = (event.pos_market_value / price).floor() as i32;
+            println!("  {} ({}, price: ${}, nShares: {}, order)", event.ticker, event.company_name, price, num_shares);
+
+            if self.is_simulation // prevent trade in simulation mode
+                { continue;}
+            let order_id = ib_client_gyantal.order(&contract)
+                .buy(num_shares)
+                // .market()
+                .limit(price * 1.20) // Limit buy order at 20% above the last day close price
+                .submit()
+                .await
+                .expect("order submission failed!");
+            println!("Order submitted: OrderID: {}, Ticker: {}, Shares: {}", order_id, contract.symbol, num_shares);
         }
         println!(); // print newline for flushing the buffer. Otherwise the last line may not appear immediately.
         // io::stdout().flush().unwrap();  // Ensure immediate output, because it is annoying to wait for newline or buffer full

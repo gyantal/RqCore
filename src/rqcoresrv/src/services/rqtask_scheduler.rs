@@ -10,17 +10,17 @@ use crate::services::fast_runner::FastRunner;
 // ---------- Global ----------
 pub static RQ_TASK_SCHEDULER: LazyLock<RqTaskScheduler> = LazyLock::new(|| RqTaskScheduler::new());
 
-// ---------- Shared helper ----------
-fn next_daily_time_utc(tz: Tz, target_time: NaiveTime) -> DateTime<Utc> {
+// ---------- helpers ----------
+fn localtime2future_utc(tz: Tz, target_time_tz: NaiveTime) -> DateTime<Utc> { // target_time_tz (11:59) is local in the tz timezone. Use today or tommorrow, whichever is in the future. Convert to UTC at the end.
     let now_tz = Utc::now().with_timezone(&tz);
-    let today_target = now_tz.date_naive().and_time(target_time);
-    let next_local = if now_tz.time() < target_time {
-        today_target
+    let today_target_tz = now_tz.date_naive().and_time(target_time_tz);
+    let next_target_tz = if now_tz.time() < target_time_tz { // if target_time_tz is later today in the future, use that. Otherwise, use tomorrow
+        today_target_tz
     } else {
-        (now_tz + Duration::days(1)).date_naive().and_time(target_time)
+        (now_tz + Duration::days(1)).date_naive().and_time(target_time_tz)
     };
     // Handle DST (ambiguous/invalid) by picking earliest valid local time
-    tz.from_local_datetime(&next_local)
+    tz.from_local_datetime(&next_target_tz)
         .earliest()
         .unwrap()
         .to_utc()
@@ -30,6 +30,7 @@ fn next_daily_time_utc(tz: Tz, target_time: NaiveTime) -> DateTime<Utc> {
 pub trait RqTask: Send + Sync {
     fn name(&self) -> &str;
     fn get_next_trigger_time(&self) -> DateTime<Utc>;
+    fn update_next_trigger_time(&self);
     fn run(&self) -> Pin<Box<dyn Future<Output = ()> + Send + '_>>;
 }
 
@@ -57,69 +58,72 @@ impl RqTask for HeartbeatTask {
         *self.next_time.lock().unwrap()
     }
 
+    fn update_next_trigger_time(&self) {
+        let mut next = self.next_time.lock().unwrap();
+        *next = Utc::now() + self.interval;
+    }
+
     fn run(&self) -> Pin<Box<dyn Future<Output = ()> + Send + '_>> {
-        let this = self;
         Box::pin(async move {
             println!("HeartbeatTask run has started");
-            let mut next = this.next_time.lock().unwrap();
-            *next = Utc::now() + this.interval;
         })
     }
 }
 
-// ---------- FastRunner (daily 11:59 ET) ----------
-pub struct FastRunnerTask {
+// ---------- FastRunner PQP (daily 11:59 ET) ----------
+pub struct FastRunnerPqpTask {
     name: String,
     next_time: Mutex<DateTime<Utc>>,
 }
 
-impl FastRunnerTask {
+impl FastRunnerPqpTask {
     pub fn new() -> Self {
-        let next_utc = Self::get_next_trigger_time_utc();
-        FastRunnerTask {
-            name: "FastRunnerTask".to_string(),
+        let next_utc = Self::get_next_trigger_time_impl();
+        FastRunnerPqpTask {
+            name: "FastRunnerPqpTask".to_string(),
             next_time: Mutex::new(next_utc),
         }
     }
 
-    fn get_next_trigger_time_utc() -> DateTime<Utc> { // we run 3 times daily: 2x Simulation, 1x RealTrading at 11:01 ET, 11:30 ET, 11:59 ET
+    fn get_next_trigger_time_impl() -> DateTime<Utc> { // we run 3 times daily: 2x Simulation, 1x RealTrading at 11:01 ET, 11:30 ET, 11:59 ET
         let tz = Eastern;
-        let targets = [
+        let targets_tz = [
+            // NaiveTime::from_hms_opt(15, 26, 00).unwrap(), // for manual test
             NaiveTime::from_hms_opt(11, 1, 20).unwrap(),
             NaiveTime::from_hms_opt(11, 30, 20).unwrap(),
             NaiveTime::from_hms_opt(11, 59, 20).unwrap(),
         ];
-        // let targets = [
-        //     NaiveTime::from_hms_opt(19, 03, 20).unwrap(),
-        //     NaiveTime::from_hms_opt(19, 55, 20).unwrap(),
-        //     NaiveTime::from_hms_opt(19, 59, 20).unwrap(),
-        // ];
 
-        targets
+        targets_tz
             .into_iter()
-            .map(|t| next_daily_time_utc(tz, t))
-            .min()                                // pick the earliest UTC time
+            .map(|t| localtime2future_utc(tz, t))
+            .min() // pick the earliest UTC time
             .unwrap()
     }
 }
 
-
-
-impl RqTask for FastRunnerTask {
+impl RqTask for FastRunnerPqpTask {
     fn name(&self) -> &str { &self.name }
 
     fn get_next_trigger_time(&self) -> DateTime<Utc> {
         *self.next_time.lock().unwrap()
     }
 
+    fn update_next_trigger_time(&self) {
+        let next_utc = Self::get_next_trigger_time_impl();
+        let mut next = self.next_time.lock().unwrap();
+        *next = next_utc;
+    }
+
     fn run(&self) -> Pin<Box<dyn Future<Output = ()> + Send + '_>> {
-        let this = self;
+        // let this = self;
         Box::pin(async move {
-            println!("FastRunnerTask run() started");
+            println!("{} FastRunnerPqpTask run() started", Utc::now().format("%H:%M:%S%.3f"));
             let utc_now = Utc::now().date_naive();
-            // if utc_now.weekday() == chrono::Weekday::Thu {
-            if utc_now.weekday() == chrono::Weekday::Mon {
-                println!("FastRunnerTask run() starts the loop");
+            let is_run_today = utc_now.weekday() == chrono::Weekday::Mon;
+            // let is_run_today = true; // run every day for testing
+            if is_run_today {
+                println!("FastRunnerPqpTask run() starts the loop");
                 let tz_et = Eastern;
                 let now_et = Utc::now().with_timezone(&tz_et);
                 let target_naive = now_et.date_naive().and_time(NaiveTime::from_hms_opt(12, 0, 0).unwrap());
@@ -128,32 +132,124 @@ impl RqTask for FastRunnerTask {
 
                 let mut fast_runner = FastRunner::new();
                 fast_runner.is_simulation = !is_live_trading;
-                // fast_runner.start_fastrunning_loop().await; // don't call this, because that will create a new Fastrunner instance and start its own loop
-                
 
                 let loop_endtime = tokio::time::Instant::now()
-                    + if is_live_trading {
-                        tokio::time::Duration::from_secs(4 * 60 + 30)
-                    } else {
-                        tokio::time::Duration::from_secs(30)
-                    };
-                while tokio::time::Instant::now() < loop_endtime { // if the loop runs more than 4 minutes 30 seconds, then finish the loop
-                    println!(">* FastRunnerTask run(): Loop iteration (IsSimu:{})", fast_runner.is_simulation);
+                    + if is_live_trading { tokio::time::Duration::from_secs(4 * 60 + 30) } 
+                        else { tokio::time::Duration::from_secs(30) };
 
-                    fast_runner.fastrunning_loop_impl().await;
+                while tokio::time::Instant::now() < loop_endtime { // if the loop runs more than 4 minutes 30 seconds, then finish the loop
+                    println!(">* FastRunnerPqpTask run(): Loop iteration (IsSimu:{})", fast_runner.is_simulation);
+
+                    fast_runner.fastrunning_loop_pqp_impl().await;
 
                     if fast_runner.has_trading_ever_started {
-                        println!("Trading has started, exiting the loop.");
+                        println!("FastRunnerPqpTask: Trading has started, exiting the loop.");
                         break;
                     }
 
                     tokio::time::sleep(tokio::time::Duration::from_millis(if fast_runner.is_simulation { fast_runner.loop_sleep_ms_simulation } else { fast_runner.loop_sleep_ms_realtrading })).await;
                 }
-                println!("FastRunnerTask run() exits the loop");
             }
-            let next_utc = Self::get_next_trigger_time_utc();
-            let mut next = this.next_time.lock().unwrap();
-            *next = next_utc;
+            println!("{} FastRunnerPqpTask run() ended", Utc::now().format("%H:%M:%S%.3f"));
+        })
+    }
+}
+
+
+// ---------- FastRunner AP (daily 11:59 ET) ----------
+pub struct FastRunnerApTask {
+    name: String,
+    next_time: Mutex<DateTime<Utc>>,
+}
+
+impl FastRunnerApTask {
+    pub fn new() -> Self {
+        let next_utc = Self::get_next_trigger_time_impl();
+        FastRunnerApTask {
+            name: "FastRunnerApTask".to_string(),
+            next_time: Mutex::new(next_utc),
+        }
+    }
+
+    fn get_next_trigger_time_impl() -> DateTime<Utc> { // we run 3 times daily: 2x Simulation, 1x RealTrading at 11:01 ET, 11:30 ET, 11:59 ET
+        let tz = Eastern;
+        let targets_tz = [
+            // NaiveTime::from_hms_opt(15, 26, 10).unwrap(), // for manual test
+            NaiveTime::from_hms_opt(11, 5, 30).unwrap(),
+            NaiveTime::from_hms_opt(11, 30, 30).unwrap(),
+            NaiveTime::from_hms_opt(11, 59, 30).unwrap(),
+        ];
+
+        targets_tz
+            .into_iter()
+            .map(|t| localtime2future_utc(tz, t))
+            .min() // pick the earliest UTC time
+            .unwrap()
+    }
+}
+
+impl RqTask for FastRunnerApTask {
+    fn name(&self) -> &str { &self.name }
+
+    fn get_next_trigger_time(&self) -> DateTime<Utc> {
+        *self.next_time.lock().unwrap()
+    }
+
+    fn update_next_trigger_time(&self) {
+        let next_utc = Self::get_next_trigger_time_impl();
+        let mut next = self.next_time.lock().unwrap();
+        *next = next_utc;
+    }
+
+    fn run(&self) -> Pin<Box<dyn Future<Output = ()> + Send + '_>> {
+        // let this = self;
+        Box::pin(async move {
+            println!("{} FastRunnerApTask run() started", Utc::now().format("%H:%M:%S%.3f"));
+
+            let now_utc = Utc::now().date_naive();
+            let virtual_rebalance_date = if now_utc.day() >= 15 { // virtual_rebalance_date as the 1st or 15th of month
+                now_utc.with_day(15).unwrap()
+            } else {
+                now_utc.with_day(1).unwrap()
+            };
+            let real_rebalance_date = match virtual_rebalance_date.weekday() { // real_rebalance_date as virtual_rebalance_date or the first weekday after it if it falls on a weekend
+                chrono::Weekday::Sat => virtual_rebalance_date + chrono::Duration::days(2),
+                chrono::Weekday::Sun => virtual_rebalance_date + chrono::Duration::days(1),
+                _ => virtual_rebalance_date,
+            };
+
+            // Check if today is the real_rebalance_date
+            let is_run_today = now_utc == real_rebalance_date;
+            // let is_run_today = true; // run every day for testing
+            if is_run_today {
+                println!("FastRunnerApTask run() starts the loop");
+                let tz_et = Eastern;
+                let now_et = Utc::now().with_timezone(&tz_et);
+                let target_naive = now_et.date_naive().and_time(NaiveTime::from_hms_opt(12, 0, 0).unwrap());
+                let target_et = tz_et.from_local_datetime(&target_naive).earliest().unwrap();
+                let is_live_trading = (now_et - target_et).num_seconds().abs() < 55; // If current time from 12:00 ET is less than 55 seconds, then set it to true.
+
+                let mut fast_runner = FastRunner::new();
+                fast_runner.is_simulation = !is_live_trading;
+
+                let loop_endtime = tokio::time::Instant::now()
+                    + if is_live_trading { tokio::time::Duration::from_secs(4 * 60 + 30) } 
+                        else { tokio::time::Duration::from_secs(30) };
+
+                while tokio::time::Instant::now() < loop_endtime { // if the loop runs more than 4 minutes 30 seconds, then finish the loop
+                    println!(">* FastRunnerApTask run(): Loop iteration (IsSimu:{})", fast_runner.is_simulation);
+
+                    fast_runner.fastrunning_loop_ap_impl().await;
+
+                    if fast_runner.has_trading_ever_started {
+                        println!("FastRunnerApTask: Trading has started, exiting the loop.");
+                        break;
+                    }
+
+                    tokio::time::sleep(tokio::time::Duration::from_millis(if fast_runner.is_simulation { fast_runner.loop_sleep_ms_simulation } else { fast_runner.loop_sleep_ms_realtrading })).await;
+                }
+            }
+            println!("{} FastRunnerApTask run() ended", Utc::now().format("%H:%M:%S%.3f"));
         })
     }
 }
@@ -186,8 +282,6 @@ impl RqTaskScheduler {
             loop {
                 let now = Utc::now();
                 let mut due_tasks: Vec<Arc<dyn RqTask>> = Vec::new();
-                let mut soonest: Option<DateTime<Utc>> = None;
-
                 {
                     let tasks = RQ_TASK_SCHEDULER.tasks.lock().unwrap();
                     for task in tasks.iter() {
@@ -195,21 +289,20 @@ impl RqTaskScheduler {
                         if trigger <= now {
                             due_tasks.push(task.clone());
                         }
-                        match soonest {
-                            Some(s) if trigger < s => soonest = Some(trigger),
-                            None => soonest = Some(trigger),
-                            _ => {}
-                        }
                     }
                 }
 
-                // Run due tasks asynchronously (await sequentially to keep it simple)
+                // Spawn due tasks as separate async tasks (fire-and-forget, no awaiting);
                 for task in due_tasks {
-                    task.run().await;
+                    let task_clone = task.clone();
+                    tokio::spawn(async move {  // spawned method might only starts as this sync thread returns to the tokio runtime at next await point
+                        task_clone.run().await;
+                    });
+                    task.update_next_trigger_time(); // their trigger time is in the past, so update it
                 }
 
-                // Recompute soonest after tasks may have updated their next times
-                soonest = None;
+                // Recompute soonest
+                let mut soonest: Option<DateTime<Utc>> = None;
                 {
                     let tasks = RQ_TASK_SCHEDULER.tasks.lock().unwrap();
                     for task in tasks.iter() {
