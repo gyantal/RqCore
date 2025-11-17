@@ -471,7 +471,9 @@ impl FastRunner {
             let order_id = ib_client_gyantal.order(&contract)
                 .buy(num_shares)
                 // .market()
-                .limit(price * 1.20) // Limit buy order at 20% above the last day close price
+                // Limit buy order at 4.5% above the price. IB rejects LMT orders if the lmt price is > 4.9% (if it is too wide)
+                // "Order Canceled - reason:We cannot accept an order at a limit price at or more aggressive than"
+                .limit(((price * 1.045) * 100.0).round() / 100.0) // price must be set to max 2 decimal, otherwise IB error: "-The price does not conform to the minimum price variation for this contract.--"
                 .submit()
                 .await
                 .expect("order submission failed!");
@@ -496,7 +498,8 @@ impl FastRunner {
             let order_id = ib_client_gyantal.order(&contract)
                 .sell(num_shares)
                 //.market()
-                .limit(price * 0.85) // Limit sell order at -15% below the last day close price
+                // Limit sell order at -4.5% below price
+                .limit(((price * 0.955) * 100.0).round() / 100.0) // price must be set to max 2 decimal, otherwise IB error: "-The price does not conform to the minimum price variation for this contract.--"
                 .submit()
                 .await
                 .expect("order submission failed!");
@@ -757,7 +760,9 @@ impl FastRunner {
             let order_id = ib_client_gyantal.order(&contract)
                 .buy(num_shares)
                 // .market()
-                .limit(price * 1.20) // Limit buy order at 20% above the last day close price
+                // Limit buy order at 4.5% above the price. IB rejects LMT orders if the lmt price is > 4.9% (if it is too wide)
+                // "Order Canceled - reason:We cannot accept an order at a limit price at or more aggressive than"
+                .limit(((price * 1.045) * 100.0).round() / 100.0) // price must be set to max 2 decimal, otherwise IB error: "-The price does not conform to the minimum price variation for this contract.--"
                 .submit()
                 .await
                 .expect("order submission failed!");

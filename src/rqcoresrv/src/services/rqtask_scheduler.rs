@@ -89,9 +89,9 @@ impl FastRunnerPqpTask {
         let tz = Eastern;
         let targets_tz = [
             // NaiveTime::from_hms_opt(15, 26, 00).unwrap(), // for manual test
-            NaiveTime::from_hms_opt(11, 1, 20).unwrap(),
-            NaiveTime::from_hms_opt(11, 30, 20).unwrap(),
-            NaiveTime::from_hms_opt(11, 59, 20).unwrap(),
+            NaiveTime::from_hms_opt(11, 1, 30).unwrap(),
+            NaiveTime::from_hms_opt(11, 30, 30).unwrap(),
+            NaiveTime::from_hms_opt(11, 59, 30).unwrap(),
         ];
 
         targets_tz
@@ -175,9 +175,9 @@ impl FastRunnerApTask {
         let tz = Eastern;
         let targets_tz = [
             // NaiveTime::from_hms_opt(15, 26, 10).unwrap(), // for manual test
-            NaiveTime::from_hms_opt(11, 5, 30).unwrap(),
-            NaiveTime::from_hms_opt(11, 30, 30).unwrap(),
-            NaiveTime::from_hms_opt(11, 59, 30).unwrap(),
+            NaiveTime::from_hms_opt(11, 5, 40).unwrap(),
+            NaiveTime::from_hms_opt(11, 30, 40).unwrap(),
+            NaiveTime::from_hms_opt(11, 59, 40).unwrap(),
         ];
 
         targets_tz
