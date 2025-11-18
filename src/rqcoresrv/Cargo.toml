@@ -1,7 +1,7 @@
 [package]
 name = "rqcoresrv"
 version = "0.1.0"
-edition = "2025"
+edition = "2024"
 
 # Periodically upgrade packages to latest Patch version.
 # E.g. ibapi = "2.1" allows “any (Major.Minor.Patch) version ≥2.1.0 and <2.2.0”, but patch version is not automatically applied.
