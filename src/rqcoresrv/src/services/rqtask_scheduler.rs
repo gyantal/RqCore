@@ -138,7 +138,7 @@ impl RqTask for FastRunnerPqpTask {
                         else { tokio::time::Duration::from_secs(30) };
 
                 while tokio::time::Instant::now() < loop_endtime { // if the loop runs more than 4 minutes 30 seconds, then finish the loop
-                    println!(">* FastRunnerPqpTask run(): Loop iteration (IsSimu:{})", fast_runner.is_simulation);
+                    println!(">*{} FastRunnerPqpTask run(): Loop iteration (IsSimu:{})", Utc::now().format("%H:%M:%S%.3f"), fast_runner.is_simulation);
 
                     fast_runner.fastrunning_loop_pqp_impl().await;
 
@@ -237,7 +237,7 @@ impl RqTask for FastRunnerApTask {
                         else { tokio::time::Duration::from_secs(30) };
 
                 while tokio::time::Instant::now() < loop_endtime { // if the loop runs more than 4 minutes 30 seconds, then finish the loop
-                    println!(">* FastRunnerApTask run(): Loop iteration (IsSimu:{})", fast_runner.is_simulation);
+                    println!(">*{} FastRunnerApTask run(): Loop iteration (IsSimu:{})", Utc::now().format("%H:%M:%S%.3f"), fast_runner.is_simulation);
 
                     fast_runner.fastrunning_loop_ap_impl().await;
 

@@ -5,7 +5,7 @@ use std::fmt;
 use tokio::io::{self, AsyncBufReadExt};
 use std::env;
 use log;
-use spdlog::{prelude::*, sink::{Sink, StdStreamSink, FileSink}, formatter::{pattern, PatternFormatter}};
+use spdlog::{prelude::*, sink::{StdStreamSink, FileSink}, formatter::{pattern, PatternFormatter}};
 use time::macros::datetime;
 use chrono::Local;
 use actix_web::{web, App, HttpServer};

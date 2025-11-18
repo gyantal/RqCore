@@ -1,14 +1,18 @@
 [package]
 name = "rqcoresrv"
 version = "0.1.0"
-edition = "2024"
+edition = "2025"
+
+# Periodically upgrade packages to latest Patch version.
+# E.g. ibapi = "2.1" allows “any (Major.Minor.Patch) version ≥2.1.0 and <2.2.0”, but patch version is not automatically applied.
+# If you want to upgrade "cargo update -p ibapi --verbose" or "cargo update" to update every version to the max patch version.
 
 # For inner dependencies, run 'cargo tree' or e.g. 'cargo tree | grep -E "(openssl|ibapi)"' (not show the real dependency) or just one package: 'cargo tree -p ibapi'
 [dependencies]
 tokio = { version = "1.0", features = ["full"] }
 # tokio   = { version = "1.48", features = ["fs", "macros", "rt-multi-thread"] }
 log = "0.4.28"
-spdlog-rs = {version = "0.4.3", features = ["source-location", "log"]}
+spdlog-rs = {version = "0.5", features = ["source-location", "log"]}
 time = "0.3.43"
 chrono = { version = "0.4", features = ["serde"] }
 chrono-tz = "0.10"
@@ -23,7 +27,7 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 
 # ibapi: Async only (default features)
-ibapi = "2.1.0"
+ibapi = "2.1"
 # Async + blocking together
 # ibapi = { version = "2.0", default-features = false, features = ["sync", "async"] }
 
