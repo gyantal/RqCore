@@ -137,6 +137,12 @@ impl RqTask for FastRunnerPqpTask {
                     + if is_live_trading { tokio::time::Duration::from_secs(4 * 60 + 30) } 
                         else { tokio::time::Duration::from_secs(30) };
 
+                // >Example running time at trading:
+                // 17:00:02.952 FastRunnerPqpTask run(): Loop iteration (IsSimu:false)
+                // Elapsed Time of reqwest.Client.get(): 2,054ms. // SA refreshed the page (high demand), or it couldn't come from RAM cache, so 600ms => 2000ms.
+                // 17:00:06.433 FastRunnerPqpTask run() ended
+                // it was 2 trades sent. It took 3.5 seconds (including downloading the page (2sec), getting the 2 prices, sending the order)
+                // as 2sec was the download URL time, RqCore handles it in 1.5sec with 2 price query and 2 order. So, about 500ms per stock.
                 while tokio::time::Instant::now() < loop_endtime { // if the loop runs more than 4 minutes 30 seconds, then finish the loop
                     println!(">*{} FastRunnerPqpTask run(): Loop iteration (IsSimu:{})", Utc::now().format("%H:%M:%S%.3f"), fast_runner.is_simulation);
 

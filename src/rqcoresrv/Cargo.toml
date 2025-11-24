@@ -3,7 +3,7 @@ name = "rqcoresrv"
 version = "0.1.0"
 edition = "2024"
 
-# Periodically upgrade packages to latest Patch version.
+# Periodically upgrade packages to latest Patch version. Do it on Linux live server too.
 # E.g. ibapi = "2.1" allows “any (Major.Minor.Patch) version ≥2.1.0 and <2.2.0”, but patch version is not automatically applied.
 # If you want to upgrade "cargo update -p ibapi --verbose" or "cargo update" to update every version to the max patch version.
 

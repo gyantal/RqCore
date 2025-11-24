@@ -205,7 +205,7 @@ impl FastRunner {
             is_simulation: true, // at trading, change this to false. Also check if IbGateway is in ReadOnly mode.
 
             loop_sleep_ms_simulation: 3750, // usually 3750
-            loop_sleep_ms_realtrading: 400, // usually 400ms (note that reqwest.client.get() is 500-700ms)
+            loop_sleep_ms_realtrading: 250, // usually 250ms (note that reqwest.client.get() is 500-700ms)
             is_loop_active: Arc::new(AtomicBool::new(false)),
             has_trading_ever_started: false,
             // initialize cookies cache
@@ -390,8 +390,8 @@ impl FastRunner {
     }
 
         fn determine_position_market_values_pqp_gyantal(&self, new_buy_events: &mut Vec<TransactionEvent>, new_sell_events: &mut Vec<TransactionEvent>) {
-        let buy_pv = 20000.0; // PV for buys
-        let sell_pv = 10000.0; // PV for sells
+        let buy_pv = 40000.0; // PV for buys
+        let sell_pv = 20000.0; // PV for sells
 
         let buy_pos_mkt_value = buy_pv / (new_buy_events.len() as f64);
         let sell_pos_mkt_value = sell_pv / (new_sell_events.len() as f64);
@@ -472,8 +472,9 @@ impl FastRunner {
                 .buy(num_shares)
                 // .market()
                 // Limit buy order at 4.5% above the price. IB rejects LMT orders if the lmt price is > 4.9% (if it is too wide)
+                // Limit buy order at 2% above the price. IB rejects LMT orders if the lmt price is > 2.7% (if it is too wide)
                 // "Order Canceled - reason:We cannot accept an order at a limit price at or more aggressive than"
-                .limit(((price * 1.045) * 100.0).round() / 100.0) // price must be set to max 2 decimal, otherwise IB error: "-The price does not conform to the minimum price variation for this contract.--"
+                .limit(((price * 1.02) * 100.0).round() / 100.0) // price must be set to max 2 decimal, otherwise IB error: "-The price does not conform to the minimum price variation for this contract.--"
                 .submit()
                 .await
                 .expect("order submission failed!");
@@ -498,8 +499,8 @@ impl FastRunner {
             let order_id = ib_client_gyantal.order(&contract)
                 .sell(num_shares)
                 //.market()
-                // Limit sell order at -4.5% below price
-                .limit(((price * 0.955) * 100.0).round() / 100.0) // price must be set to max 2 decimal, otherwise IB error: "-The price does not conform to the minimum price variation for this contract.--"
+                // Limit sell order at -2% below price
+                .limit(((price * 0.98) * 100.0).round() / 100.0) // price must be set to max 2 decimal, otherwise IB error: "-The price does not conform to the minimum price variation for this contract.--"
                 .submit()
                 .await
                 .expect("order submission failed!");
@@ -760,9 +761,7 @@ impl FastRunner {
             let order_id = ib_client_gyantal.order(&contract)
                 .buy(num_shares)
                 // .market()
-                // Limit buy order at 4.5% above the price. IB rejects LMT orders if the lmt price is > 4.9% (if it is too wide)
-                // "Order Canceled - reason:We cannot accept an order at a limit price at or more aggressive than"
-                .limit(((price * 1.045) * 100.0).round() / 100.0) // price must be set to max 2 decimal, otherwise IB error: "-The price does not conform to the minimum price variation for this contract.--"
+                .limit(((price * 1.02) * 100.0).round() / 100.0) // price must be set to max 2 decimal, otherwise IB error: "-The price does not conform to the minimum price variation for this contract.--"
                 .submit()
                 .await
                 .expect("order submission failed!");
