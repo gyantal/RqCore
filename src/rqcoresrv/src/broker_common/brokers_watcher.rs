@@ -1,4 +1,5 @@
 use std::sync::{Arc, LazyLock, Mutex};
+use std::env;
 
 // TODO: implement inside the rqcoresrv project now, but it will go to its own crate later in the /common folder
 
@@ -61,20 +62,33 @@ pub struct BrokersWatcher {
 }
 
 impl BrokersWatcher {
-    #[cfg(target_os = "windows")]
-    const GATEWAY_CLIENT_ID: i32 = 201; // gyantal:201, Daya:202, Balazs: 203, TODO: in the future it should come automatically from a function.
-    #[cfg(target_os = "linux")]
-    const GATEWAY_CLIENT_ID: i32 = 200;
-
     pub fn new() -> Self {
         BrokersWatcher { gateways: Mutex::new(Vec::new()) }
     }
+
+    pub fn gateway_client_id() -> i32 {
+    if env::consts::OS == "windows" { // On windows, use USERDOMAIN, instead of USERNAME, because USERNAME can be the same on multiple machines (e.g. "gyantal" on both GYANTAL-PC and GYANTAL-LAPTOP)
+        let userdomain = env::var("USERDOMAIN").expect("Failed to get USERDOMAIN environment variable");
+        match userdomain.as_str() {
+            "GYANTAL-PC" => 210,
+            "GYANTAL-LAPTOP" => 211,
+            "BALAZS-PC" => 212,
+            "BALAZS-LAPTOP" => 213,
+            "DAYA-DESKTOP" => 214,
+            "DAYA-LAPTOP" => 215,
+            "DRCHARMAT-LAPTOP" => 216,
+            _ => panic!("Windows user name is not recognized. Add your username and folder here!"),
+        }
+    } else { // Linux and MacOS
+        200
+    }
+}
 
     pub async fn init(&self) {
         println!("BrokersWatcher.init() start");
         // Initialize all gateways with their default configurations
         let connection_url_dcmain = "34.251.1.119:7303"; // port info is fine here. OK. Temporary anyway, and login is impossible, because there are 2 firewalls with source-IP check: AwsVm, IbTWS
-        let client_id = Self::GATEWAY_CLIENT_ID;
+        let client_id = Self::gateway_client_id();
         let mut gateway0 = Gateway::new(connection_url_dcmain, client_id);
         gateway0.init().await;
         let mut gateways = self.gateways.lock().unwrap();

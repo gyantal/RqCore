@@ -17,7 +17,7 @@ time = "0.3.43"
 chrono = { version = "0.4", features = ["serde"] }
 chrono-tz = "0.10"
 actix-files = "0.6.8"
-actix-web = { version = "4.11", features = ["rustls-0_23"] }
+actix-web = { version = "4.12", features = ["rustls-0_23"] }
 rustls = "0.23"
 rustls-pemfile = "2"
 # Reqwest's default features include BOTH rustls-tls AND default-tls (which pulls hyper-tls → native-tls → openssl-sys). We should use rustls, not the openssl libraries of the Linux system.

@@ -8,8 +8,11 @@ use log;
 use spdlog::{prelude::*, sink::{StdStreamSink, FileSink}, formatter::{pattern, PatternFormatter}};
 use time::macros::datetime;
 use chrono::Local;
-use actix_web::{web, App, HttpServer};
+use actix_web::{web, App, Error, HttpServer,body::MessageBody};
 use actix_web::dev::ServerHandle;
+use actix_web::dev::ServiceResponse;
+use actix_web::middleware::{from_fn, Compress, Logger, Next};
+use actix_web::http::header::CACHE_CONTROL;
 use actix_files::Files;
 use ibapi::{prelude::*, market_data::historical::WhatToShow};
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
@@ -101,7 +104,7 @@ fn init_log() -> Result<(), Box<dyn std::error::Error>> {
         .build()?);
     file_sink.set_formatter(Box::new(PatternFormatter::new(pattern!("{month}{day}T{time}.{millisecond}#{tid}|{level}|{logger}|{source}|{payload}{eol}"))));
 
-    let logger = Logger::builder()
+    let logger = spdlog::Logger::builder()
         .sink(Arc::new(stdout_sink))
         .sink(file_sink)
         .build()?;
@@ -117,6 +120,22 @@ fn init_log() -> Result<(), Box<dyn std::error::Error>> {
     log::debug!("test log::debug()");
     log::trace!("test log::trace() Detailed trace message");
     Ok(())
+}
+
+// Middleware function to add 30-day cache headers
+async fn browser_cache_control_30_days_middleware<B>(
+    req: actix_web::dev::ServiceRequest,
+    next: Next<B>,
+) -> Result<ServiceResponse<impl MessageBody>, Error>
+where
+    B: MessageBody + 'static,
+{
+    let mut res = next.call(req).await?;
+    res.headers_mut().insert(
+        CACHE_CONTROL,
+        "public, max-age=2592000".parse().unwrap(),
+    );
+    Ok(res)
 }
 
 fn is_taconite_domain(ctx: &actix_web::guard::GuardContext) -> bool {
@@ -206,11 +225,14 @@ fn actix_websrv_run(runtime_info: Arc<RuntimeInfo>, server_workers: usize) -> st
     // curl -v --resolve thetaconite.com:8080:127.0.0.1 --insecure http://thetaconite.com:8080/
 
     let server = HttpServer::new(move || {
-        // Keep it as an example for Dependency Injection:
+        // Keep _runtime_info as an example for Dependency Injection:
         // If you ever need runtime_info inside handlers,
         // you can clone info_for_server here and put it into app data.
         let _runtime_info = runtime_info_for_server.clone();
         App::new()
+            .wrap(Logger::default())
+            .wrap(Compress::default()) // Enable compression (including Brotli when supported by client). We gave up compile time brotli.exe, as it complicates Linux deployment, and we use browser cache control for 30 days, so clients only get pages once per month. Not frequently. So, not much usefulness. And deployment is easier.
+            .wrap(from_fn(browser_cache_control_30_days_middleware))
         // We can serve many domains, each having its own subfolder in ./static/
         // However, when we rewritten path in a middleware (from /index.html to /taconite/index.html), it was not being used by Actix Files
         // Because the main Actix -Files service is mounted at the root "/" and doesn't know (?) how to handle the "/taconite" prefix. 
@@ -229,7 +251,7 @@ fn actix_websrv_run(runtime_info: Arc<RuntimeInfo>, server_workers: usize) -> st
     })
     .workers(server_workers)
     .bind(format!("0.0.0.0:{}", http_listening_port))?  // Don't bind to 127.0.0.1 because it only listens to localhost, not external requests to the IP
-    .bind_rustls_0_23(format!("0.0.0.0:{}", https_listening_port), tls_config)?
+    .bind_rustls_0_23(format!("0.0.0.0:{}", https_listening_port), tls_config)? // https://127.0.0.1:8443
     .run();
 
     let handle = server.handle();
