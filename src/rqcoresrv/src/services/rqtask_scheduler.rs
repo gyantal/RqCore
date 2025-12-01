@@ -239,7 +239,7 @@ impl RqTask for FastRunnerApTask {
                 fast_runner.is_simulation = !is_live_trading;
 
                 let loop_endtime = tokio::time::Instant::now()
-                    + if is_live_trading { tokio::time::Duration::from_secs(4 * 60 + 30) } 
+                    + if is_live_trading { tokio::time::Duration::from_secs(4 * 60 + 30) } // 2025-12-01: AP/Analysis tab published at 12:01:15 ET (late), the AP history was published 30 seconds earlier
                         else { tokio::time::Duration::from_secs(30) };
 
                 while tokio::time::Instant::now() < loop_endtime { // if the loop runs more than 4 minutes 30 seconds, then finish the loop

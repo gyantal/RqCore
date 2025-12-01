@@ -275,8 +275,8 @@ async fn console_menu_loop(server_handle: ServerHandle, runtime_info: Arc<Runtim
         println!("2) Show runtime info");
         println!("3) TaskScheduler: Show next trigger times.");
         println!("41) Test: tokio::spawn() background async task in main runtime");
-        println!("42) Test IbAPI: historical data");
-        println!("43) Test IbAPI: trade");
+        println!("42) Test IbAPI (gyantal): historical data");
+        println!("43) Test IbAPI (dcmain): realtime bars");
         println!("51) FastRunner PQP: Test HttpDownload");
         println!("52) FastRunner PQP: Loop Start");
         println!("53) FastRunner PQP: Loop Stop");
@@ -318,7 +318,7 @@ async fn console_menu_loop(server_handle: ServerHandle, runtime_info: Arc<Runtim
                 test_ibapi_hist_data().await;
             }
             "43" => {
-                test_ibapi_trade().await;
+                test_ibapi_realtime_bars().await;
             }
             "51" => {
                 fast_runner.test_http_download_pqp().await;
@@ -394,7 +394,7 @@ async fn test_ibapi_hist_data() {
     // client is dropped at the end of the scope, disconnecting from TWS (checked)
 }
 
-async fn test_ibapi_trade() {
+async fn test_ibapi_realtime_bars() {
     let contract = Contract::stock("PM").build();
 
     let ib_client_dcmain = { // 0 is dcmain, 1 is gyantal
@@ -454,8 +454,14 @@ async fn main() -> std::io::Result<()> {
     RQ_BROKERS_WATCHER.init().await;
 
     RQ_TASK_SCHEDULER.schedule_task(Arc::new(HeartbeatTask::new()));
-    RQ_TASK_SCHEDULER.schedule_task(Arc::new(FastRunnerPqpTask::new()));
-    RQ_TASK_SCHEDULER.schedule_task(Arc::new(FastRunnerApTask::new()));
+    // In the future FastRunner tasks will be scheduled on Linux server only.
+    if env::consts::OS == "windows" { // 2025-12-01: only schedule FastRunner tasks on GYANTAL-PC and GYANTAL-LAPTOP (to avoid other developers' machines running them)
+        let userdomain = env::var("USERDOMAIN").expect("Failed to get USERDOMAIN environment variable");
+        if (userdomain.as_str() == "GYANTAL-PC") || (userdomain.as_str() == "GYANTAL-LAPTOP") {
+            RQ_TASK_SCHEDULER.schedule_task(Arc::new(FastRunnerPqpTask::new()));
+            RQ_TASK_SCHEDULER.schedule_task(Arc::new(FastRunnerApTask::new()));
+        }
+    }
     RQ_TASK_SCHEDULER.start();
 
     // Detect CPU count

@@ -389,9 +389,9 @@ impl FastRunner {
         // io::stdout().flush().unwrap();  // Ensure immediate output, because it is annoying to wait for newline or buffer full
     }
 
-        fn determine_position_market_values_pqp_gyantal(&self, new_buy_events: &mut Vec<TransactionEvent>, new_sell_events: &mut Vec<TransactionEvent>) {
+    fn determine_position_market_values_pqp_gyantal(&self, new_buy_events: &mut Vec<TransactionEvent>, new_sell_events: &mut Vec<TransactionEvent>) {
         let buy_pv = 40000.0; // PV for buys
-        let sell_pv = 20000.0; // PV for sells
+        let sell_pv = 30000.0; // PV for sells
 
         let buy_pos_mkt_value = buy_pv / (new_buy_events.len() as f64);
         let sell_pos_mkt_value = sell_pv / (new_sell_events.len() as f64);
@@ -684,7 +684,7 @@ impl FastRunner {
     }
 
     fn determine_position_market_values_ap_gyantal(&self, new_buy_events: &mut Vec<TransactionEvent>) {
-        let buy_pv = 10000.0; // PV for buys
+        let buy_pv = 30000.0; // PV for buys
 
         let buy_pos_mkt_value = buy_pv / (new_buy_events.len() as f64);
         for event in new_buy_events.iter_mut() {
