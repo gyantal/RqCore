@@ -8,7 +8,7 @@ use log;
 use spdlog::{prelude::*, sink::{StdStreamSink, FileSink}, formatter::{pattern, PatternFormatter}};
 use time::macros::datetime;
 use chrono::Local;
-use actix_web::{web, App, Error, HttpServer,body::MessageBody};
+use actix_web::{cookie::Key, web, App, Error, HttpServer,body::MessageBody};
 use actix_web::dev::ServerHandle;
 use actix_web::dev::ServiceResponse;
 use actix_web::middleware::{from_fn, Compress, Logger, Next};
@@ -22,12 +22,21 @@ use rustls::crypto::aws_lc_rs::sign::any_supported_type;
 use rustls_pemfile;
 use rustls::{ServerConfig};
 
+use actix_identity::{IdentityMiddleware};
+use actix_session::{storage::CookieSessionStore, config::PersistentSession, SessionMiddleware};
+use base64::{engine::general_purpose, Engine};
+
 use crate::broker_common::brokers_watcher::RQ_BROKERS_WATCHER;
 use crate::services::rqtask_scheduler::{RQ_TASK_SCHEDULER, HeartbeatTask, FastRunnerPqpTask, FastRunnerApTask};
+use crate::middleware::user_account;
 
 mod services {
     pub mod rqtask_scheduler;
     pub mod fast_runner;
+}
+
+mod middleware {
+    pub mod user_account;
 }
 
 mod broker_common {
@@ -156,6 +165,8 @@ fn is_taconite_domain(ctx: &actix_web::guard::GuardContext) -> bool {
 }
 
 fn actix_websrv_run(runtime_info: Arc<RuntimeInfo>, server_workers: usize) -> std::io::Result<(actix_web::dev::Server, ServerHandle)> {
+    let rqcore_config = user_account::load_rqcore_config();
+    let secret_key = Key::from(&general_purpose::STANDARD.decode(&rqcore_config.api_secret_code).expect("Invalid Base64 key"),);
     let runtime_info_for_server = runtime_info;
 
     let http_listening_port = 8080;
@@ -233,6 +244,23 @@ fn actix_websrv_run(runtime_info: Arc<RuntimeInfo>, server_workers: usize) -> st
             .wrap(Logger::default())
             .wrap(Compress::default()) // Enable compression (including Brotli when supported by client). We gave up compile time brotli.exe, as it complicates Linux deployment, and we use browser cache control for 30 days, so clients only get pages once per month. Not frequently. So, not much usefulness. And deployment is easier.
             .wrap(from_fn(browser_cache_control_30_days_middleware))
+            .wrap(IdentityMiddleware::default()) // Enables Identity API; identity is stored inside the session.
+            .wrap(SessionMiddleware::builder(CookieSessionStore::default(), secret_key.clone()) // Uses an encrypted cookie to store the entire session.
+            .session_lifecycle(PersistentSession::default() // Makes the cookie persistent (not deleted when browser closes).
+            .session_ttl(time::Duration::days(365))) // Session validity duration (365 days).
+            .cookie_secure(true) // Cookie is only sent over HTTPS (required for SameSite=None).
+            .cookie_http_only(true) // Cookie is not accessible from JavaScript (XSS protection).
+            .cookie_name("session".to_string()) // Name of the session cookie.
+            .cookie_same_site(actix_web::cookie::SameSite::None) // Required for Google OAuth redirects; allows cross-site cookies.
+            .cookie_domain(None)
+            .build())
+            .service(user_account::login)
+            .service(user_account::google_callback)
+            .service(user_account::logout)
+            .service(user_account::user_infor)
+            .service(user_account::authorized_sample)
+            .service(user_account::root_index)
+            .service(user_account::webserver_ping)
         // We can serve many domains, each having its own subfolder in ./static/
         // However, when we rewritten path in a middleware (from /index.html to /taconite/index.html), it was not being used by Actix Files
         // Because the main Actix -Files service is mounted at the root "/" and doesn't know (?) how to handle the "/taconite" prefix. 

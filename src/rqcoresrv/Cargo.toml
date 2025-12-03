@@ -18,6 +18,8 @@ chrono = { version = "0.4", features = ["serde"] }
 chrono-tz = "0.10"
 actix-files = "0.6.8"
 actix-web = { version = "4.12", features = ["rustls-0_23"] }
+actix-identity = "0.7" # Stores logged-in user identity (e.g., user ID/email) using secure cookies.
+actix-session = { version = "0.9", features = ["cookie-session"] }  # Maintains user session data across requests using encrypted cookies.
 rustls = "0.23"
 rustls-pemfile = "2"
 # Reqwest's default features include BOTH rustls-tls AND default-tls (which pulls hyper-tls → native-tls → openssl-sys). We should use rustls, not the openssl libraries of the Linux system.
@@ -25,6 +27,9 @@ rustls-pemfile = "2"
 reqwest = { version = "0.12", features = ["rustls-tls", "http2", "json"], default-features = false }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+
+percent-encoding = "2"
+base64 = "0.22"
 
 # ibapi: Async only (default features)
 ibapi = "2.1"
