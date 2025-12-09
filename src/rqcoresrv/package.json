@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "build": "tsc && esbuild src_webapps/test_ts2js/test_ts2js.ts --bundle --sourcemap --minify --outfile=static/test_ts2js/test_ts2js.js"
+    "build": "tsc && esbuild src_webapps/test_ts2js/test_ts2js.ts --bundle --sourcemap --minify --outfile=static/test_ts2js/test_ts2js.js && esbuild src_webapps/withdrawal_simulator/withdrawal_simulator.ts --bundle --sourcemap --minify --loader:.avif=file --outfile=static/withdrawal_simulator/withdrawal_simulator.js"
   },
   "devDependencies": {
     "esbuild": "^0.27.0",

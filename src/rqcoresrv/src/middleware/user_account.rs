@@ -10,6 +10,15 @@ use percent_encoding::{percent_encode, percent_decode_str, NON_ALPHANUMERIC};
 use std::env;
 use std::{path::Path, fs,};
 
+// Steps to create Google OAuth Client ID for a web app:
+// 1. Go to https://console.cloud.google.com and create/select a project.
+// 2. Enable "Google Identity Services / OAuth 2.0" API under APIs & Services → Library.
+// 3. Configure the OAuth consent screen with app name and emails.
+// 4. Navigate to APIs & Services → Credentials → Create Credentials → OAuth Client ID.
+// 5. Select "Web application" and add Authorized JavaScript Origins and Redirect URIs.
+// 6. Save to generate the Client ID and Client Secret.
+// 7. Redirect URI must exactly match scheme + host + path used in login callback.
+
 #[derive(Deserialize, Debug)]
 struct TokenResponse {
     access_token: String,
@@ -28,7 +37,7 @@ pub struct RqCoreConfig {
     pub api_secret_code: String
 }
 
-pub fn sensitive_config_folder_path() -> String { // This will be remove once we finialise a location to keep the shared functions - Daya
+pub fn sensitive_config_folder_path() -> String { // TODO: This will be removed once we finialise a location to keep the shared functions - Daya
     if env::consts::OS == "windows" { // On windows, use USERDOMAIN, instead of USERNAME, because USERNAME can be the same on multiple machines (e.g. "gyantal" on both GYANTAL-PC and GYANTAL-LAPTOP)
         let userdomain = env::var("USERDOMAIN").expect("Failed to get USERDOMAIN environment variable");
         match userdomain.as_str() {

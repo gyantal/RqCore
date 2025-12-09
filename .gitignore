@@ -11,3 +11,4 @@ Cargo.lock
 
 # Not all JS files need to be eliminated from /static, only the TS generated ones. We can create a separate folder for them, but that is awkward.
 **/static/test_ts2js/test_ts2js.js
+**/static/withdrawal_simulator/withdrawal_simulator.js
