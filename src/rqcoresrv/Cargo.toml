@@ -36,4 +36,6 @@ ibapi = "2.1"
 # Async + blocking together
 # ibapi = { version = "2.0", default-features = false, features = ["sync", "async"] }
 
+rqcommon = { path = "../common/rqcommon" }
+
 [dev-dependencies]

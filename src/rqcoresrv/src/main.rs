@@ -30,6 +30,9 @@ use crate::broker_common::brokers_watcher::RQ_BROKERS_WATCHER;
 use crate::services::rqtask_scheduler::{RQ_TASK_SCHEDULER, HeartbeatTask, FastRunnerPqpTask, FastRunnerApTask};
 use crate::middleware::user_account;
 
+// use rqcommon::sensitive_config_folder_path;
+use rqcommon::utils::runningenv::sensitive_config_folder_path;
+
 mod services {
     pub mod rqtask_scheduler;
     pub mod fast_runner;
@@ -41,25 +44,6 @@ mod middleware {
 
 mod broker_common {
     pub mod brokers_watcher;
-}
-
-pub fn sensitive_config_folder_path() -> String {
-    if env::consts::OS == "windows" { // On windows, use USERDOMAIN, instead of USERNAME, because USERNAME can be the same on multiple machines (e.g. "gyantal" on both GYANTAL-PC and GYANTAL-LAPTOP)
-        let userdomain = env::var("USERDOMAIN").expect("Failed to get USERDOMAIN environment variable");
-        match userdomain.as_str() {
-            "GYANTAL-PC" => "h:/.shortcut-targets-by-id/0BzxkV1ug5ZxvVmtic1FsNTM5bHM/GDriveHedgeQuant/shared/GitHubRepos/NonCommitedSensitiveData/RqCore/".to_string(),
-            "GYANTAL-LAPTOP" => "h:/.shortcut-targets-by-id/0BzxkV1ug5ZxvVmtic1FsNTM5bHM/GDriveHedgeQuant/shared/GitHubRepos/NonCommitedSensitiveData/RqCore/".to_string(),
-            "BALAZS-PC" => "h:/.shortcut-targets-by-id/0BzxkV1ug5ZxvVmtic1FsNTM5bHM/GDriveHedgeQuant/shared/GitHubRepos/NonCommitedSensitiveData/RqCore/".to_string(),
-            "BALAZS-LAPTOP" => "g:/.shortcut-targets-by-id/0BzxkV1ug5ZxvVmtic1FsNTM5bHM/GDriveHedgeQuant/shared/GitHubRepos/NonCommitedSensitiveData/RqCore/".to_string(),
-            "DAYA-DESKTOP" => "g:/.shortcut-targets-by-id/0BzxkV1ug5ZxvVmtic1FsNTM5bHM/GDriveHedgeQuant/shared/GitHubRepos/NonCommitedSensitiveData/RqCore/".to_string(),
-            "DAYA-LAPTOP" => "g:/.shortcut-targets-by-id/0BzxkV1ug5ZxvVmtic1FsNTM5bHM/GDriveHedgeQuant/shared/GitHubRepos/NonCommitedSensitiveData/RqCore/".to_string(),
-            "DRCHARMAT-LAPTOP" => "c:/Agy/NonCommitedSensitiveData/RqCore/".to_string(),
-            _ => panic!("Windows user name is not recognized. Add your username and folder here!"),
-        }
-    } else { // Linux and MacOS
-        let username = env::var("LOGNAME").expect("Failed to get LOGNAME environment variable"); // when running in "screen -r" session, LOGNAME is set, but USER is not
-        format!("/home/{}/RQ/sensitive_data/", username) // e.g. "/home/rquser/RQ/sensitive_data/https_certs";
-    }
 }
 
 // SNI (Server Name Indication): the hostname sent by the client. Used for selecting HTTPS cert.

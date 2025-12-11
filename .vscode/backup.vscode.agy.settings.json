@@ -1,4 +1,5 @@
 {
+    "github.copilot.nextEditSuggestions.enabled": true,
     "workbench.colorTheme": "Quiet Light",
     "editor.tokenColorCustomizations": {
         "[Quiet Light]": {

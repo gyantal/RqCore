@@ -7,8 +7,10 @@ use reqwest::Client;
 use serde::Deserialize;
 use std::collections::HashMap;
 use percent_encoding::{percent_encode, percent_decode_str, NON_ALPHANUMERIC};
-use std::env;
 use std::{path::Path, fs,};
+
+// use rqcommon::sensitive_config_folder_path;
+use rqcommon::utils::runningenv::sensitive_config_folder_path;
 
 // Steps to create Google OAuth Client ID for a web app:
 // 1. Go to https://console.cloud.google.com and create/select a project.
@@ -35,25 +37,6 @@ pub struct RqCoreConfig {
     pub google_client_id: String,
     pub google_client_secret: String,
     pub api_secret_code: String
-}
-
-pub fn sensitive_config_folder_path() -> String { // TODO: This will be removed once we finialise a location to keep the shared functions - Daya
-    if env::consts::OS == "windows" { // On windows, use USERDOMAIN, instead of USERNAME, because USERNAME can be the same on multiple machines (e.g. "gyantal" on both GYANTAL-PC and GYANTAL-LAPTOP)
-        let userdomain = env::var("USERDOMAIN").expect("Failed to get USERDOMAIN environment variable");
-        match userdomain.as_str() {
-            "GYANTAL-PC" => "h:/.shortcut-targets-by-id/0BzxkV1ug5ZxvVmtic1FsNTM5bHM/GDriveHedgeQuant/shared/GitHubRepos/NonCommitedSensitiveData/RqCore/".to_string(),
-            "GYANTAL-LAPTOP" => "h:/.shortcut-targets-by-id/0BzxkV1ug5ZxvVmtic1FsNTM5bHM/GDriveHedgeQuant/shared/GitHubRepos/NonCommitedSensitiveData/RqCore/".to_string(),
-            "BALAZS-PC" => "h:/.shortcut-targets-by-id/0BzxkV1ug5ZxvVmtic1FsNTM5bHM/GDriveHedgeQuant/shared/GitHubRepos/NonCommitedSensitiveData/RqCore/".to_string(),
-            "BALAZS-LAPTOP" => "g:/.shortcut-targets-by-id/0BzxkV1ug5ZxvVmtic1FsNTM5bHM/GDriveHedgeQuant/shared/GitHubRepos/NonCommitedSensitiveData/RqCore/".to_string(),
-            "DAYA-DESKTOP" => "g:/.shortcut-targets-by-id/0BzxkV1ug5ZxvVmtic1FsNTM5bHM/GDriveHedgeQuant/shared/GitHubRepos/NonCommitedSensitiveData/RqCore/".to_string(),
-            "DAYA-LAPTOP" => "g:/.shortcut-targets-by-id/0BzxkV1ug5ZxvVmtic1FsNTM5bHM/GDriveHedgeQuant/shared/GitHubRepos/NonCommitedSensitiveData/RqCore/".to_string(),
-            "DRCHARMAT-LAPTOP" => "c:/Agy/NonCommitedSensitiveData/RqCore/".to_string(),
-            _ => panic!("Windows user name is not recognized. Add your username and folder here!"),
-        }
-    } else { // Linux and MacOS
-        let username = env::var("LOGNAME").expect("Failed to get LOGNAME environment variable"); // when running in "screen -r" session, LOGNAME is set, but USER is not
-        format!("/home/{}/RQ/sensitive_data/", username) // e.g. "/home/rquser/RQ/sensitive_data/https_certs";
-    }
 }
 
 pub fn load_rqcore_config() -> RqCoreConfig {
