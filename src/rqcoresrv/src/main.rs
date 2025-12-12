@@ -21,14 +21,15 @@ use rustls::sign::CertifiedKey;
 use rustls::crypto::aws_lc_rs::sign::any_supported_type;
 use rustls_pemfile;
 use rustls::{ServerConfig};
+use chrono::{Utc};
 
 use actix_identity::{IdentityMiddleware};
 use actix_session::{storage::CookieSessionStore, config::PersistentSession, SessionMiddleware};
 use base64::{engine::general_purpose, Engine};
 
-use crate::broker_common::brokers_watcher::RQ_BROKERS_WATCHER;
+use crate::{broker_common::brokers_watcher::RQ_BROKERS_WATCHER};
 use crate::services::rqtask_scheduler::{RQ_TASK_SCHEDULER, HeartbeatTask, FastRunnerPqpTask, FastRunnerApTask};
-use crate::middleware::user_account;
+use crate::middleware::{ user_account, server_diagnostics::{self, WEB_APP_START_TIME, RUNTIME_INFO},};
 
 // use rqcommon::sensitive_config_folder_path;
 use rqcommon::utils::runningenv::sensitive_config_folder_path;
@@ -40,6 +41,7 @@ mod services {
 
 mod middleware {
     pub mod user_account;
+    pub mod server_diagnostics;
 }
 
 mod broker_common {
@@ -245,6 +247,7 @@ fn actix_websrv_run(runtime_info: Arc<RuntimeInfo>, server_workers: usize) -> st
             .service(user_account::authorized_sample)
             .service(user_account::root_index)
             .service(user_account::webserver_ping)
+            .service(server_diagnostics::server_diagnostics)
         // We can serve many domains, each having its own subfolder in ./static/
         // However, when we rewritten path in a middleware (from /index.html to /taconite/index.html), it was not being used by Actix Files
         // Because the main Actix -Files service is mounted at the root "/" and doesn't know (?) how to handle the "/taconite" prefix. 
@@ -460,6 +463,8 @@ struct RuntimeInfo {
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     init_log().expect("Failed to initialize logging");
+    WEB_APP_START_TIME.set(Utc::now()).ok();
+
     info!("***Starting RqCoreSrv...");
     println!("main() start");
 
@@ -489,6 +494,7 @@ async fn main() -> std::io::Result<()> {
         server_workers,
         pid: std::process::id(),
     });
+    RUNTIME_INFO.set(runtime_info.clone()).ok();
 
     let (server, server_handle) = actix_websrv_run(runtime_info.clone(), server_workers)?;
 
