@@ -196,11 +196,13 @@ pub async fn authorized_sample(session: Session) -> impl Responder {
 }
 
 #[get("/")]
-pub async fn root_index(id: Option<Identity>, session: Session) -> impl Responder {
+pub async fn root_index(http_req: HttpRequest, id: Option<Identity>, session: Session) -> impl Responder {
+    let host = http_req.connection_info().host().to_string();
     let is_logged_in = id.as_ref().is_some_and(|i| i.id().is_ok());
     // 1. Choose which file to serve
     let filename = if is_logged_in { "index.html" } else { "index_nouser.html" };
-    let file_path = Path::new("./static").join(filename);
+    let base_folder = if host.contains("thetaconite.com") { "./static/taconite" } else { "./static" }; // Domain-specific folder
+    let file_path = Path::new(base_folder).join(filename);
 
     // 2. Read the file content
     let mut html = match std::fs::read_to_string(&file_path) {
