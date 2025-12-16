@@ -1,10 +1,84 @@
 <html>
+<head>
+    <title>RqCore</title>
+    <style>
+       .grid-container {
+            display: flex;
+            flex-wrap: wrap;
+            border: 2px dashed #ccc;
+            border-left: none;
+            border-right: none;
+        }
+
+        .dashboard-col {
+            flex: 1 1 250px;
+            min-width: 220px;
+            padding: 15px;
+            border-right: 2px dashed #ccc;
+        }
+
+        .dashboard-col:last-child {
+            border-right: none;
+        }
+
+        .dashboard-col h3 {
+            margin-top: 0;
+            padding-bottom: 8px;
+            border-bottom: 2px dashed #ccc;
+        }
+
+        .dashboard-item {
+            margin: 10px 0;
+        }
+
+        a {
+            color: #0066cc;
+            text-decoration: none;
+        }
+
+        a:hover {
+            text-decoration: underline;
+        }
+    </style>
+</head>
+<body>
+
 <h1>RqCore</h1>
 <img src="favicon.ico">
 <!-- <img src="taconite/images/taconite02_s.jpg"> -->
- <body style="font-family: Arial; text-align: center; margin-top: 80px;">
-    <a href="/useraccount/userinfo">UserInfo</a><br>
-    <a href="/useraccount/authorized_sample">authorized details</a><br>
-    <a href="/serverdiagnostics">server diagnostics</a><br>
+<body style="font-family: Arial; text-align: center; margin-top: 80px;">
+    <div class="grid-container">
+        <div class="dashboard-col">
+            <h3>Main</h3>
+            <div class="dashboard-item">RoboTrader</div>
+        </div>
+        <div class="dashboard-col">
+            <h3>Tools</h3>
+            <div class="dashboard-item">
+                <a href="https://127.0.0.1:8443/withdrawal_simulator/index.html">
+                    Systematic Withdrawal Simulator
+                </a>
+            </div>
+        </div>
+        <div class="dashboard-col">
+            <h3>Docs</h3>
+            <div class="dashboard-item">
+                <a href="https://docs.google.com/document/d/1rHd4e9ZPn4rLnCYQyNU66V3Pty377iNUl93VBm_4BwM">
+                    ToDo gDoc (Balazs)
+                </a>
+            </div>
+            <div class="dashboard-item">
+                <a href="https://docs.google.com/document/d/1r3E_6VNN_m_yNhtkx4jBohvWb6gn_eP5bW7yrtD85DA">
+                    ToDo gDoc (Daya)
+                </a>
+            </div>
+        </div>
+        <div class="dashboard-col">
+            <h3>Websites</h3>
+            <div class="dashboard-item"><a href="https://sqcore.net/">SqCore</a></div>
+            <div class="dashboard-item"><a href="https://www.snifferquant.com/dac/">DAC</a></div>
+        </div>
+    </div><br>
+    <a href="/index_dev.html"><b>Developer Dashboard</b></a>
 </body>
 </html>
