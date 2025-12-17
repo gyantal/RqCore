@@ -282,7 +282,7 @@ async fn console_menu_loop(server_handle: ServerHandle, runtime_info: Arc<Runtim
 
     loop {
         println!();
-        // TODO: implement the class ColorConsole from C#/sqcommon/utils, because enum colors would be better. And also, that can log-out timestamps as well. 
+        // TODO: implement the class ColorConsole from C#/sqcommon/utils, because enum colors would be better. And also, that can log-out timestamps as well.
         // Or probably better:: use fern::colors::{Color, ColoredLevelConfig}; or better find a popular crate for colored console output
         // Actually, I have to implement my own RqConsole anyway, because we need to log to file, or log the timestamps as well
         println!("\x1b[35m----  (type and press Enter)  ----\x1b[0m"); // Print in magenta using ANSI escape code

@@ -1,0 +1,13 @@
+[toolchain]
+# For local development. To support *.rs files "Format Selection" context menu, need to use Nightly toolchain (rustc, cargo, rustfmt). 
+# https://github.com/rust-lang/rust-analyzer/discussions/17899
+# rustup show                # shows the active toolchain + overrides
+# rustup toolchain list      # what you have installed
+# rustup toolchain install stable
+# rustup toolchain install nightly
+# Also, has to set up vscode settings:
+# "rust-analyzer.rustfmt.rangeFormatting.enable": true,
+#    "rust-analyzer.rustfmt.extraArgs": [
+#        "+nightly"
+#    ]
+channel = "nightly"  # "stable" or "nightly"

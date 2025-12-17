@@ -16,9 +16,8 @@ use std::time::Instant;
 pub fn benchmark_elapsed_time(name: &str, f: impl FnOnce()) {
     let start = Instant::now();
     f();
-    let elapsed = start.elapsed();
-    let micros = elapsed.as_secs_f64() * 1_000_000.0;
-    println!("Elapsed Time of {}: {:.2}us", name, micros); // TODO: no native support thousand separators in float or int. Use crate 'num-format' or 'thousands' or better: write a lightweight formatter train in RqCommon
+    let elapsed_microsec = start.elapsed().as_secs_f64() * 1_000_000.0;
+    println!("Elapsed Time of {}: {:.2}us", name, elapsed_microsec); // TODO: no native support thousand separators in float or int. Use crate 'num-format' or 'thousands' or better: write a lightweight formatter train in RqCommon
 }
 
 pub async fn benchmark_elapsed_time_async<F, Fut>(name: &str, f: F)
@@ -28,9 +27,8 @@ where
 {
     let start = Instant::now();
     f().await;
-    let elapsed = start.elapsed();
-    let micros = elapsed.as_secs_f64() * 1_000_000.0;
-    println!("Elapsed Time of {}: {:.2}us", name, micros);
+    let elapsed_microsec = start.elapsed().as_secs_f64() * 1_000_000.0;
+    println!("Elapsed Time of {}: {:.2}us", name, elapsed_microsec);
 }
 
 #[derive(Debug, Deserialize)]
@@ -194,6 +192,7 @@ pub struct FastRunner {
     pub has_trading_ever_started: bool,
     pub cookies: Option<String>,
     pub cookies_file_last_modtime: Option<SystemTime>,
+    pub m_is_cookies_surely_working: bool,
 }
 
 impl FastRunner {
@@ -211,11 +210,16 @@ impl FastRunner {
             // initialize cookies cache
             cookies: None,
             cookies_file_last_modtime: None,
+            m_is_cookies_surely_working: false,
         }
     }
 
     const COOKIES_FILE_PATH: &'static str = "../../../rqcore_data/fast_run_1_headers.txt";
     fn ensure_cookies_loaded(&mut self) {
+        if self.m_is_cookies_surely_working { // skip 130us file operation, checking the file_modified_time if we are sure that cookies are working
+            return;
+        }
+
         let file_metadata = fs::metadata(Self::COOKIES_FILE_PATH).expect("metadata() failed for cookies file");
         let file_modified_time = file_metadata.modified().expect("modified() failed for cookies file");
 
@@ -245,6 +249,7 @@ impl FastRunner {
         benchmark_elapsed_time("ensure_cookies_loaded()", || {  // 300us first, 70us later
             self.ensure_cookies_loaded(); // cookies are reloaded from file only if needed, if the file changed.
         });
+        self.m_is_cookies_surely_working = false;
 
         const URL: &str = "https://seekingalpha.com/api/v3/quant_pro_portfolio/transactions?include=ticker.slug%2Cticker.name%2Cticker.companyName&page[size]=1000&page[number]=1";
 
@@ -288,6 +293,9 @@ impl FastRunner {
         
         // Extract transactions list (Vec<Transaction>)
         let transactions = api_response.data;
+        if !transactions.is_empty() {  // if we have any transactions, cookies are surely working
+            self.m_is_cookies_surely_working = true;
+        }
         
         // Extract stocks dictionary (HashMap<String, Stock>)
         let mut stocks: HashMap<String, Stock> = HashMap::new();
@@ -562,6 +570,7 @@ impl FastRunner {
         benchmark_elapsed_time("ensure_cookies_loaded()", || {  // 300us first, 70us later
             self.ensure_cookies_loaded(); // cookies are reloaded from file only if needed, if the file changed.
         });
+        self.m_is_cookies_surely_working = false;
 
         const URL: &str = "https://seekingalpha.com/api/v3/service_plans/458/marketplace/articles?include=primaryTickers%2CsecondaryTickers%2CservicePlans%2CservicePlanArticles%2Cauthor%2CsecondaryAuthor";
 
@@ -611,6 +620,10 @@ impl FastRunner {
                     tag_lookup.insert(inc.id.clone(), (name, company));
                 }
             }
+        }
+
+        if !tag_lookup.is_empty() {  // if we have any "type": "tag" in the articles, cookies are surely working
+            self.m_is_cookies_surely_working = true;
         }
 
         // Print each article with its primary ticker names and companies
@@ -786,6 +799,7 @@ async fn get_price(ib_client_dcmain: &Arc<Client>, event: &TransactionEvent, con
         // Also, it only works during market hours. After market closes, it doesn't return any bars and we wait forever.
         // We ask the 5 seconds bars, but luckily the first bar comes immediately. Later new bars arrive every 5 seconds.
         // ib_client_gyantal: Error: Parse(5, "Invalid Real-time Query:No market data permissions for NYSE STK. Requested market data requires additional subscription for API. See link in 'Market Data Connections' dialog for more details."
+        let start = Instant::now();
         let mut subscription = ib_client_dcmain
             .realtime_bars(contract, RealtimeBarSize::Sec5, RealtimeWhatToShow::Trades, TradingHours::Regular).await
             .expect("realtime bars request failed!");
@@ -799,6 +813,8 @@ async fn get_price(ib_client_dcmain: &Arc<Client>, event: &TransactionEvent, con
                 },
                 Err(e) => eprintln!("Error: {e:?}"),
             }
+            let elapsed_microsec = start.elapsed().as_secs_f64() * 1_000_000.0;
+            println!("Elapsed Time of ib_client.realtime_bars(): {:.2}us", elapsed_microsec);
             break; // just 1 bar for testing, otherwise it would block here forever
         }
     }

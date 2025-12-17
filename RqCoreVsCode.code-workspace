@@ -7,6 +7,10 @@
     "settings": {
         "rust-analyzer.linkedProjects": [
             "./src/rqcoresrv/Cargo.toml"
+        ],
+        "rust-analyzer.rustfmt.rangeFormatting.enable": true,
+        "rust-analyzer.rustfmt.extraArgs": [
+            "+nightly"
         ]
     }
 }
