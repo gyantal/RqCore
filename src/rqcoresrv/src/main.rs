@@ -1,4 +1,4 @@
-use std::{sync::{Arc}, path::Path};
+use std::{sync::{Arc, OnceLock}, path::Path};
 use std::fs::File;
 use std::io::BufReader;
 use std::fmt;
@@ -21,7 +21,7 @@ use rustls::sign::CertifiedKey;
 use rustls::crypto::aws_lc_rs::sign::any_supported_type;
 use rustls_pemfile;
 use rustls::{ServerConfig};
-use chrono::{Utc};
+use chrono::{Utc, DateTime};
 
 use actix_identity::{IdentityMiddleware};
 use actix_session::{storage::CookieSessionStore, config::PersistentSession, SessionMiddleware};
@@ -29,7 +29,10 @@ use base64::{engine::general_purpose, Engine};
 
 use crate::{broker_common::brokers_watcher::RQ_BROKERS_WATCHER};
 use crate::services::rqtask_scheduler::{RQ_TASK_SCHEDULER, HeartbeatTask, FastRunnerPqpTask, FastRunnerApTask};
-use crate::middleware::{ user_account, server_diagnostics::{self, WEB_APP_START_TIME, RUNTIME_INFO},};
+use crate::middleware::{ user_account, server_diagnostics::{self}, http_request_logger::{self,  HttpRequestLogs, http_request_logger_middleware}};
+
+pub static SERVER_APP_START_TIME: OnceLock<DateTime<Utc>> = OnceLock::new();
+pub static HTTP_REQUEST_LOGS: OnceLock<Arc<HttpRequestLogs>> = OnceLock::new();
 
 // use rqcommon::sensitive_config_folder_path;
 use rqcommon::utils::runningenv::sensitive_config_folder_path;
@@ -42,6 +45,7 @@ mod services {
 mod middleware {
     pub mod user_account;
     pub mod server_diagnostics;
+    pub mod http_request_logger;
 }
 
 mod broker_common {
@@ -230,6 +234,7 @@ fn actix_websrv_run(runtime_info: Arc<RuntimeInfo>, server_workers: usize) -> st
             .wrap(Logger::default())
             .wrap(Compress::default()) // Enable compression (including Brotli when supported by client). We gave up compile time brotli.exe, as it complicates Linux deployment, and we use browser cache control for 30 days, so clients only get pages once per month. Not frequently. So, not much usefulness. And deployment is easier.
             .wrap(from_fn(browser_cache_control_30_days_middleware))
+            .wrap(from_fn(http_request_logger_middleware))
             .wrap(IdentityMiddleware::default()) // Enables Identity API; identity is stored inside the session.
             .wrap(SessionMiddleware::builder(CookieSessionStore::default(), secret_key.clone()) // Uses an encrypted cookie to store the entire session.
             .session_lifecycle(PersistentSession::default() // Makes the cookie persistent (not deleted when browser closes).
@@ -248,6 +253,7 @@ fn actix_websrv_run(runtime_info: Arc<RuntimeInfo>, server_workers: usize) -> st
             .service(user_account::root_index)
             .service(user_account::webserver_ping)
             .service(server_diagnostics::server_diagnostics)
+            .service(http_request_logger::http_request_activity_log)
         // We can serve many domains, each having its own subfolder in ./static/
         // However, when we rewritten path in a middleware (from /index.html to /taconite/index.html), it was not being used by Actix Files
         // Because the main Actix -Files service is mounted at the root "/" and doesn't know (?) how to handle the "/taconite" prefix. 
@@ -463,7 +469,8 @@ struct RuntimeInfo {
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     init_log().expect("Failed to initialize logging");
-    WEB_APP_START_TIME.set(Utc::now()).ok();
+    SERVER_APP_START_TIME.set(Utc::now()).ok();
+    HTTP_REQUEST_LOGS.set(Arc::new(HttpRequestLogs::new())).expect("REQUEST_LOGS already initialized");
 
     info!("***Starting RqCoreSrv...");
     println!("main() start");
@@ -494,7 +501,6 @@ async fn main() -> std::io::Result<()> {
         server_workers,
         pid: std::process::id(),
     });
-    RUNTIME_INFO.set(runtime_info.clone()).ok();
 
     let (server, server_handle) = actix_websrv_run(runtime_info.clone(), server_workers)?;
 
