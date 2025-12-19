@@ -29,10 +29,9 @@ use base64::{engine::general_purpose, Engine};
 
 use crate::{broker_common::brokers_watcher::RQ_BROKERS_WATCHER};
 use crate::services::rqtask_scheduler::{RQ_TASK_SCHEDULER, HeartbeatTask, FastRunnerPqpTask, FastRunnerApTask};
-use crate::middleware::{ user_account, server_diagnostics::{self}, http_request_logger::{self,  HttpRequestLogs, http_request_logger_middleware}};
+use crate::middleware::{ user_account, server_diagnostics::{self}, http_request_logger::{self, HTTP_REQUEST_LOGS, HttpRequestLogs, http_request_logger_middleware}};
 
 pub static SERVER_APP_START_TIME: OnceLock<DateTime<Utc>> = OnceLock::new();
-pub static HTTP_REQUEST_LOGS: OnceLock<Arc<HttpRequestLogs>> = OnceLock::new();
 
 // use rqcommon::sensitive_config_folder_path;
 use rqcommon::utils::runningenv::sensitive_config_folder_path;

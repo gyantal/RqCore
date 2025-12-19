@@ -1,38 +1,64 @@
-<html>
+<html style="background: linear-gradient(to right, #3080c7 5%, #5b9dd7 10%, #d5f5f6 30%, #d5f5f6 70%, #ace16b 90%, #91d73a 95%);">
 <head>
     <title>RqCore</title>
     <style>
-       .grid-container {
+        .grid-container {
             display: flex;
             flex-wrap: wrap;
-            border: 2px dashed #ccc;
-            border-left: none;
-            border-right: none;
+            gap: 20px;
+            padding: 20px;
         }
 
         .dashboard-col {
             flex: 1 1 250px;
-            min-width: 220px;
-            padding: 15px;
-            border-right: 2px dashed #ccc;
-        }
-
-        .dashboard-col:last-child {
-            border-right: none;
+            background: rgba(255, 255, 255, 0.88);
+            border-radius: 12px;
+            padding: 16px;
+            box-shadow:
+               0 6px 14px rgba(0, 0, 0, 0.12),
+                0 2px 6px rgba(0, 0, 0, 0.08);
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
         }
 
         .dashboard-col h3 {
-            margin-top: 0;
-            padding-bottom: 8px;
-            border-bottom: 2px dashed #ccc;
+            margin: 0 0 14px 0;
+            padding: 10px 12px;
+            border-radius: 8px;
+            background: linear-gradient(135deg, #3080c7, #5b9dd7);
+            color: #ffffff;
+            font-size: 1.1rem;
+            text-align: center;
+            box-shadow: 0 3px 6px rgba(0, 0, 0, 0.2);
         }
 
         .dashboard-item {
-            margin: 10px 0;
+            padding: 10px 12px;
+            margin: 8px 0;
+            border-radius: 8px;
+            text-align: left;
+            background-color: #e6f0ff;
+            transition: background 0.2s ease, transform 0.2s ease;
+        }
+
+        .dashboard-item:nth-child(even) {
+            background-color: #e3f2e1;
+        }
+
+        .dashboard-item:hover {
+            background-color: #FFA500;
+            transform: translateX(4px);
+        }
+
+        .dashboard-item img {
+            width: 25px;
+            height: 25px;
+            object-fit: contain;
+            vertical-align: middle;
+            margin-right: 6px;
         }
 
         a {
-            color: #0066cc;
+            color: #1f4e79;
             text-decoration: none;
         }
 
@@ -43,8 +69,7 @@
 </head>
 <body>
 
-<h1>RqCore</h1>
-<img src="favicon.ico">
+<h1><img src="favicon.ico">RqCore</h1>
 <!-- <img src="taconite/images/taconite02_s.jpg"> -->
 <body style="font-family: Arial; text-align: center; margin-top: 80px;">
     <div class="grid-container">
@@ -55,8 +80,8 @@
         <div class="dashboard-col">
             <h3>Tools</h3>
             <div class="dashboard-item">
-                <a href="https://127.0.0.1:8443/withdrawal_simulator/index.html">
-                    Systematic Withdrawal Simulator
+                <a href="/withdrawal_simulator/index.html">
+                    <img src="favicon.ico">Systematic Withdrawal Simulator
                 </a>
             </div>
         </div>
@@ -64,19 +89,19 @@
             <h3>Docs</h3>
             <div class="dashboard-item">
                 <a href="https://docs.google.com/document/d/1rHd4e9ZPn4rLnCYQyNU66V3Pty377iNUl93VBm_4BwM">
-                    ToDo gDoc (Balazs)
+                    <img src="generic_doc_vslow_30pct_s.avif">ToDo gDoc (Balazs)
                 </a>
             </div>
             <div class="dashboard-item">
                 <a href="https://docs.google.com/document/d/1r3E_6VNN_m_yNhtkx4jBohvWb6gn_eP5bW7yrtD85DA">
-                    ToDo gDoc (Daya)
+                    <img src="generic_doc_vslow_30pct_s.avif">ToDo gDoc (Daya)
                 </a>
             </div>
         </div>
         <div class="dashboard-col">
             <h3>Websites</h3>
-            <div class="dashboard-item"><a href="https://sqcore.net/">SqCore</a></div>
-            <div class="dashboard-item"><a href="https://www.snifferquant.com/dac/">DAC</a></div>
+            <div class="dashboard-item"><a href="https://sqcore.net/"><img src="favicon.ico">SqCore</a></div>
+            <div class="dashboard-item"><a href="https://www.snifferquant.com/dac/"><img src="favicon.ico">DAC</a></div>
         </div>
     </div><br>
     <a href="/index_dev.html"><b>Developer Dashboard</b></a>

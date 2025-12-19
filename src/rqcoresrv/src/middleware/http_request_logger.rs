@@ -2,7 +2,9 @@ use actix_session::SessionExt;
 use actix_web::{body::MessageBody, dev::{ServiceRequest, ServiceResponse}, get, middleware::Next, Error, HttpResponse,};
 use chrono::{DateTime, Utc};
 use std::{collections::VecDeque, fmt::Write, net::IpAddr, sync::Mutex,};
-use crate::HTTP_REQUEST_LOGS;
+use std::{sync::{Arc, OnceLock}};
+
+pub static HTTP_REQUEST_LOGS: OnceLock<Arc<HttpRequestLogs>> = OnceLock::new();
 
 #[derive(Debug, Clone)]
 pub struct HttpRequestLog {
@@ -65,7 +67,7 @@ impl HttpRequestLogs {
 // Logs Http request and response details
 pub async fn http_request_logger_middleware<B>(
     service_req: ServiceRequest,
-    next: Next<B>
+    next: Next<B>,
 ) -> Result<ServiceResponse<B>, Error>
 where
     B: MessageBody + 'static,
