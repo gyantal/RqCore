@@ -318,6 +318,30 @@ async fn console_menu_loop(server_handle: ServerHandle, runtime_info: Arc<Runtim
         match line.trim() {
             "1" => {
                         println!("Hello. I am not crashed yet! :)");
+
+                        // testing Rust panic crash with Parse()
+                        let num_str = "a45.5";
+                        
+                        let parse_result = num_str.parse::<f64>();
+                        match parse_result {
+                            Ok(num) => {
+                                print!("test my price: {}", num);
+                            },
+                            Err(e)  => {
+                                // print!("Error {}", e);
+                                log::error!("Error {}", e); // should go to console + go to logfile
+                            }
+                        }
+
+                        // if (parse_result.is_err())
+                        // {
+                        //     log::error!("Error {}", e); // should go to console + go to logfile
+                        //     return parse_result.err(); // retur the error to the caller.
+                        // }
+                        // let num = parse_result.into_ok();
+
+                        // let num1 = num_str.parse::<f64>().unwrap();
+                        // print!("test my price: {}", num1);
             }
             "2" => {
                 print_runtime_info(&runtime_info);
