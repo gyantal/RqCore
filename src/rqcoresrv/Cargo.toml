@@ -18,6 +18,8 @@ chrono = { version = "0.4", features = ["serde"] }
 chrono-tz = "0.10"
 actix-files = "0.6.8"
 actix-web = { version = "4.12", features = ["rustls-0_23"] }
+actix-ws = "0.2"
+futures-util = "0.3"
 actix-identity = "0.7" # Stores logged-in user identity (e.g., user ID/email) using secure cookies.
 actix-session = { version = "0.9", features = ["cookie-session"] }  # Maintains user session data across requests using encrypted cookies.
 rustls = "0.23"

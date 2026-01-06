@@ -30,7 +30,7 @@ use base64::{engine::general_purpose, Engine};
 use crate::{broker_common::brokers_watcher::RQ_BROKERS_WATCHER};
 use crate::services::rqtask_scheduler::{RQ_TASK_SCHEDULER, HeartbeatTask, FastRunnerPqpTask, FastRunnerApTask};
 use crate::middleware::{ user_account, server_diagnostics::{self}, http_request_logger::{self, HTTP_REQUEST_LOGS, HttpRequestLogs, http_request_logger_middleware}};
-
+use crate::test_websocket::{test_ws};
 pub static SERVER_APP_START_TIME: OnceLock<DateTime<Utc>> = OnceLock::new();
 
 // use rqcommon::sensitive_config_folder_path;
@@ -49,6 +49,10 @@ mod middleware {
 
 mod broker_common {
     pub mod brokers_watcher;
+}
+
+mod test_websocket {
+    pub mod test_ws;
 }
 
 // SNI (Server Name Indication): the hostname sent by the client. Used for selecting HTTPS cert.
@@ -157,6 +161,7 @@ fn actix_websrv_run(runtime_info: Arc<RuntimeInfo>, server_workers: usize) -> st
     let rqcore_config = user_account::load_rqcore_config();
     let secret_key = Key::from(&general_purpose::STANDARD.decode(&rqcore_config.api_secret_code).expect("Invalid Base64 key"),);
     let runtime_info_for_server = runtime_info;
+    HTTP_REQUEST_LOGS.set(Arc::new(HttpRequestLogs::new())).expect("REQUEST_LOGS already initialized");
 
     let http_listening_port = 8080;
     let https_listening_port = 8443;
@@ -253,6 +258,7 @@ fn actix_websrv_run(runtime_info: Arc<RuntimeInfo>, server_workers: usize) -> st
             .service(user_account::webserver_ping)
             .service(server_diagnostics::server_diagnostics)
             .service(http_request_logger::http_request_activity_log)
+            .service(test_ws::test_websocket)
         // We can serve many domains, each having its own subfolder in ./static/
         // However, when we rewritten path in a middleware (from /index.html to /taconite/index.html), it was not being used by Actix Files
         // Because the main Actix -Files service is mounted at the root "/" and doesn't know (?) how to handle the "/taconite" prefix. 
@@ -493,8 +499,7 @@ struct RuntimeInfo {
 async fn main() -> std::io::Result<()> {
     init_log().expect("Failed to initialize logging");
     SERVER_APP_START_TIME.set(Utc::now()).ok();
-    HTTP_REQUEST_LOGS.set(Arc::new(HttpRequestLogs::new())).expect("REQUEST_LOGS already initialized");
-
+    
     info!("***Starting RqCoreSrv...");
     println!("main() start");
 

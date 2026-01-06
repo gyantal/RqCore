@@ -219,7 +219,7 @@ pub async fn root_index(http_req: HttpRequest, id: Option<Identity>, session: Se
             // let user_email = html_escape::encode_text(&email);
 
             let user_info_html = format!(
-                r#"<div style="margin:20px 0; font-weight:bold; color:#2c3e50;">
+                r#"<div style="margin:20px 0; font-weight:bold; z-index:10; color:#2c3e50;">
                     {email} | <a href="/useraccount/logout">Logout</a>
                    </div>"#
             );
