@@ -8,7 +8,7 @@
 DAYS_THRESHOLD=35   # Threshold for renewal (days until expiration)
 
 # Run certbot certificates and extract days valid
-echo "$(date '+%Y-%m-%d %H:%M:%S') Checking certificate validity..."
+echo "*** $(date '+%Y-%m-%d %H:%M:%S') START: Checking certificate validity..."
 CERT_OUTPUT=$(sudo certbot certificates 2>/dev/null)
 NUM_DAYS_VALID=$(echo "$CERT_OUTPUT" | grep -oP 'VALID: \K\d+(?= days)' | head -n 1)
 # The script gets the first VALID: X days value. Since certificates for rqcore.com and thetaconite.com were issued together, they should have the same expiration. 
@@ -31,8 +31,13 @@ if [ "$NUM_DAYS_VALID" -gt "$DAYS_THRESHOLD" ]; then
 fi
 
 # If 35 days or less, proceed with renewal
-echo "Certificates have $NUM_DAYS_VALID days left, renewing..."
+echo "Certificates have $NUM_DAYS_VALID days left, renewing with 'certbot renew --quiet'..."
 sudo certbot renew --quiet
+
+echo "After renewal attempt, checking updated certificate validity..."
+CERT_OUTPUT_AFTER=$(sudo certbot certificates 2>/dev/null)
+NUM_DAYS_VALID_AFTER=$(echo "$CERT_OUTPUT_AFTER" | grep -oP 'VALID: \K\d+(?= days)' | head -n 1)
+echo "Certificates valid for: $NUM_DAYS_VALID_AFTER days after renewal attempt. Start copying new cert files..."
 
 # After cert renew, copy the new certificate files to a directory owned by rquser
 # chmod: give only rquser Read/Write (4+2 = 6) access.
@@ -43,6 +48,7 @@ sudo chown rquser:rquser /home/rquser/RQ/sensitive_data/https_certs/rqcore.com/f
 sudo chown rquser:rquser /home/rquser/RQ/sensitive_data/https_certs/rqcore.com/privkey.pem
 sudo chmod 600 /home/rquser/RQ/sensitive_data/https_certs/rqcore.com/fullchain.pem
 sudo chmod 600 /home/rquser/RQ/sensitive_data/https_certs/rqcore.com/privkey.pem
+
 # thetaconite.com
 sudo cp /etc/letsencrypt/live/thetaconite.com/fullchain.pem /home/rquser/RQ/sensitive_data/https_certs/thetaconite.com/
 sudo cp /etc/letsencrypt/live/thetaconite.com/privkey.pem /home/rquser/RQ/sensitive_data/https_certs/thetaconite.com/
@@ -56,7 +62,7 @@ sudo chmod 600 /home/rquser/RQ/sensitive_data/https_certs/thetaconite.com/privke
 # sudo systemctl reload nginx
 
 # We renewed the certs 35 days earlier. Killing the Rust Webserver is too cruel.
-# The webserver itself should check the HTTPS certs file date every day (or week) and reload them if they changed. 
+# The webserver itself should check the HTTPS certs file date every day (or week) and reload them if they changed.
 # But no need to restart the whole webserver as it might do important work.
 
-echo "Certificate renewal check complete."
+echo "$(date '+%Y-%m-%d %H:%M:%S') END: Certificate renewal check complete."

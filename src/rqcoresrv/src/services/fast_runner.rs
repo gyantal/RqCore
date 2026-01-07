@@ -466,7 +466,7 @@ impl FastRunner {
             println!("  {} ({}, ${}, ${}, event)", event.ticker, event.company_name, event.price.as_deref().unwrap_or("N/A"), event.pos_market_value);
             let contract = Contract::stock(&event.ticker).build();
             let price = get_price(&ib_client_dcmain, event, &contract).await;
-            if price.is_nan() {  // If no price, we cannot calculate nShares, not even MKT orders possible
+            if price.is_nan() { // If no price (e.g. no real-time market data for ADR, OTC), we cannot calculate nShares, not even MKT orders possible, we skip only this trade, but don't panic and do other trades
                 println!("  {} ({}, cannot determine price, skipping...)", event.ticker, event.company_name);
                 continue;
             }
@@ -480,9 +480,9 @@ impl FastRunner {
                 .buy(num_shares)
                 // .market()
                 // Limit buy order at 4.5% above the price. IB rejects LMT orders if the lmt price is > 4.9% (if it is too wide)
-                // Limit buy order at 2% above the price. IB rejects LMT orders if the lmt price is > 2.7% (if it is too wide)
+                // Limit buy order at 2.5% above the price. IB rejects LMT orders if the lmt price is > 2.7% (if it is too wide)
                 // "Order Canceled - reason:We cannot accept an order at a limit price at or more aggressive than"
-                .limit(((price * 1.02) * 100.0).round() / 100.0) // price must be set to max 2 decimal, otherwise IB error: "-The price does not conform to the minimum price variation for this contract.--"
+                .limit(((price * 1.025) * 100.0).round() / 100.0) // price must be set to max 2 decimal, otherwise IB error: "-The price does not conform to the minimum price variation for this contract.--"
                 .submit()
                 .await
                 .expect("order submission failed!");
@@ -494,7 +494,7 @@ impl FastRunner {
             println!("  {} ({}, ${}, ${}, event)", event.ticker, event.company_name, event.price.as_deref().unwrap_or("N/A"), event.pos_market_value);
             let contract = Contract::stock(&event.ticker).build();
             let price = get_price(&ib_client_dcmain, event, &contract).await;
-            if price.is_nan() {  // If no price, we cannot calculate nShares, not even MKT orders possible
+            if price.is_nan() { // If no price (e.g. no real-time market data for ADR, OTC), we cannot calculate nShares, not even MKT orders possible, we skip only this trade, but don't panic and do other trades
                 println!("  {} ({}, cannot determine price, skipping...)", event.ticker, event.company_name);
                 continue;
             }
@@ -507,8 +507,8 @@ impl FastRunner {
             let order_id = ib_client_gyantal.order(&contract)
                 .sell(num_shares)
                 //.market()
-                // Limit sell order at -2% below price
-                .limit(((price * 0.98) * 100.0).round() / 100.0) // price must be set to max 2 decimal, otherwise IB error: "-The price does not conform to the minimum price variation for this contract.--"
+                // Limit sell order at -2.5% below price
+                .limit(((price * 0.975) * 100.0).round() / 100.0) // price must be set to max 2 decimal, otherwise IB error: "-The price does not conform to the minimum price variation for this contract.--"
                 .submit()
                 .await
                 .expect("order submission failed!");
@@ -761,7 +761,7 @@ impl FastRunner {
             println!("  {} ({}, ${}, ${}, event)", event.ticker, event.company_name, event.price.as_deref().unwrap_or("N/A"), event.pos_market_value);
             let contract = Contract::stock(&event.ticker).build();
             let price = get_price(&ib_client_dcmain, event, &contract).await;
-            if price.is_nan() {  // If no price, we cannot calculate nShares, not even MKT orders possible
+            if price.is_nan() { // If no price (e.g. no real-time market data for ADR, OTC), we cannot calculate nShares, not even MKT orders possible, we skip only this trade, but don't panic and do other trades
                 println!("  {} ({}, cannot determine price, skipping...)", event.ticker, event.company_name);
                 continue;
             }
@@ -774,7 +774,7 @@ impl FastRunner {
             let order_id = ib_client_gyantal.order(&contract)
                 .buy(num_shares)
                 // .market()
-                .limit(((price * 1.02) * 100.0).round() / 100.0) // price must be set to max 2 decimal, otherwise IB error: "-The price does not conform to the minimum price variation for this contract.--"
+                .limit(((price * 1.025) * 100.0).round() / 100.0) // price must be set to max 2 decimal, otherwise IB error: "-The price does not conform to the minimum price variation for this contract.--"
                 .submit()
                 .await
                 .expect("order submission failed!");
@@ -811,10 +811,12 @@ async fn get_price(ib_client_dcmain: &Arc<Client>, event: &TransactionEvent, con
                     println!("{bar:?}"); 
                     price = bar.close; 
                 },
+                // Error is raised here if we don't have realtime market data for that stock. In that case, price stays as NaN and we skip that single trade, but continue with other trades.
+                // 2025-12-22: XIACY (ADR): "Parse(5, "Invalid Real-time Query:No market data permissions for ARCAEDGE STK", "invalid float literal")"
                 Err(e) => eprintln!("Error: {e:?}"),
             }
             let elapsed_microsec = start.elapsed().as_secs_f64() * 1_000_000.0;
-            println!("Elapsed Time of ib_client.realtime_bars(): {:.2}us", elapsed_microsec);
+            println!("Elapsed Time of ib_client.realtime_bars(): {:.2}us", elapsed_microsec); // about 430-550ms first bar, then subsequent bars every 5s
             break; // just 1 bar for testing, otherwise it would block here forever
         }
     }

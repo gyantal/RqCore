@@ -13,7 +13,7 @@ use std::{path::Path, fs,};
 use rqcommon::utils::runningenv::sensitive_config_folder_path;
 
 // Steps to create Google OAuth Client ID for a web app:
-// 1. Go to https://console.cloud.google.com and create/select a project.
+// 1. Go to https://console.cloud.google.com (with gya***l1@gmail.com) and create/select a project.
 // 2. Enable "Google Identity Services / OAuth 2.0" API under APIs & Services → Library.
 // 3. Configure the OAuth consent screen with app name and emails.
 // 4. Navigate to APIs & Services → Credentials → Create Credentials → OAuth Client ID.
