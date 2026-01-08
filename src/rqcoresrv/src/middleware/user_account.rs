@@ -39,12 +39,17 @@ pub struct RqCoreConfig {
     pub api_secret_code: String,
 }
 
-pub fn load_rqcore_config() -> RqCoreConfig {
+pub fn load_rqcore_config() -> Result<RqCoreConfig, String> {
     let sensitive_config_folder_path = sensitive_config_folder_path();
     let rqcore_config_path = format!("{}rqcore.config", sensitive_config_folder_path);
 
-    let content = fs::read_to_string(&rqcore_config_path)
-        .unwrap_or_else(|_| panic!("Failed to read config file at {}", rqcore_config_path));
+    let content = match fs::read_to_string(&rqcore_config_path) {
+    Ok(content) => content,
+    Err(err) => {
+        log::error!("Failed to read config file '{}': {}", rqcore_config_path, err);
+        return Err("Configuration file missing or unreadable".into());
+        }
+    };
 
     let mut google_client_id = String::new();
     let mut google_client_secret = String::new();
@@ -64,11 +69,17 @@ pub fn load_rqcore_config() -> RqCoreConfig {
         }
     }
 
-    if google_client_id.is_empty() { panic!("Missing 'google_client_id' in rqcore.config"); }
-    if google_client_secret.is_empty() { panic!("Missing 'client_secret' in rqcore.config"); }
-    if api_secret_code.is_empty() { panic!("Missing 'api_client_secret' in rqcore.config"); }
+    if google_client_id.is_empty() {
+        return Err("Missing 'google_client_id' in rqcore.config".into());
+    }
+    if google_client_secret.is_empty() {
+        return Err("Missing 'google_client_secret' in rqcore.config".into());
+    }
+    if api_secret_code.is_empty() {
+        return Err("Missing 'api_secret_code' in rqcore.config".into());
+    }
 
-    RqCoreConfig { google_client_id, google_client_secret, api_secret_code}
+    Ok(RqCoreConfig {google_client_id, google_client_secret, api_secret_code, })
 }
 
 fn get_google_redirect_uri(request: &HttpRequest) -> String {
@@ -86,8 +97,18 @@ pub async fn login(request: HttpRequest, id: Option<Identity>, query: Query<Hash
             .append_header(("Location", return_url))
             .finish();
     }
-    let rqcore_config = load_rqcore_config();
-    let client_id = rqcore_config.google_client_id;
+
+    let rqcore_config = match load_rqcore_config() {
+        Ok(rq_config) => rq_config,
+        Err(err) => {
+            log::error!("Config error during login: {}", err);
+
+            return HttpResponse::InternalServerError()
+                .content_type("text/plain")
+                .body("Authentication is temporarily unavailable.");
+        }
+    };
+    let client_id = &rqcore_config.google_client_id;
     let return_url = query.get("returnUrl").cloned().unwrap_or("/".to_string());
     let redirect_uri = get_google_redirect_uri(&request);
 
@@ -102,56 +123,95 @@ pub async fn login(request: HttpRequest, id: Option<Identity>, query: Query<Hash
 
 #[get("/useraccount/login/callback")]
 pub async fn google_callback(request: HttpRequest, query: Query<HashMap<String, String>>, session: Session) -> impl Responder {
-    if let Some(code) = query.get("code") {
-        let rqcore_config_details = load_rqcore_config();
-        let redirect_uri = get_google_redirect_uri(&request);
-
-        let client = Client::new();
-        let params = [
-            ("code", code.as_str()),
-            ("client_id", rqcore_config_details.google_client_id.as_str()),
-            ("client_secret", rqcore_config_details.google_client_secret.as_str()),
-            ("redirect_uri", redirect_uri.as_str()),
-            ("grant_type", "authorization_code"),
-        ];
-
-        let token_resp = client
-            .post("https://oauth2.googleapis.com/token")
-            .form(&params)
-            .send()
-            .await
-            .expect("Failed to exchange code")
-            .json::<TokenResponse>()
-            .await
-            .expect("Failed to parse token");
-
-        let user_info = client
-            .get("https://www.googleapis.com/oauth2/v2/userinfo")
-            .bearer_auth(&token_resp.access_token)
-            .send()
-            .await
-            .expect("Failed to fetch userinfo")
-            .json::<GoogleUser>()
-            .await
-            .expect("Failed to parse userinfo");
-
-        session.insert("user_email", &user_info.email).unwrap();
-        session.insert("user_name", &user_info.name).unwrap();
-
-        Identity::login(&request.extensions(), user_info.email.clone())
-        .expect("Failed to create identity");
-
-        let mut redirect_url = "/".to_string();
-        // check if the query contains a "state" key
-        if let Some(encoded) = query.get("state") {
-            redirect_url = percent_decode_str(encoded).decode_utf8().unwrap().into_owned();
+    let code = match query.get("code") {
+        Some(code) => code,
+        None => {
+            return HttpResponse::BadRequest().content_type("text/plain").body("Missing authorization code");
         }
-        HttpResponse::Found()
-            .append_header((header::LOCATION, redirect_url))
-            .finish()
-    } else {
-        HttpResponse::BadRequest().body("Missing 'code' parameter")
+    };
+
+    let rqcore_config = match load_rqcore_config() {
+        Ok(rq_config) => rq_config,
+        Err(err) => {
+            log::error!("Config error during Google callback: {}", err);
+            return HttpResponse::InternalServerError()
+                .content_type("text/plain")
+                .body("Authentication configuration error.");
+        }
+    };
+
+    let redirect_uri = get_google_redirect_uri(&request);
+
+    let client = Client::new();
+    let params = [
+        ("code", code.as_str()),
+        ("client_id", rqcore_config.google_client_id.as_str()),
+        ("client_secret", rqcore_config.google_client_secret.as_str()),
+        ("redirect_uri", redirect_uri.as_str()),
+        ("grant_type", "authorization_code"),
+    ];
+    let token_resp = match client
+        .post("https://oauth2.googleapis.com/token")
+        .form(&params)
+        .send()
+        .await
+        {
+            Ok(resp) => match resp.json::<TokenResponse>().await {
+                Ok(token) => token,
+                Err(e) => {
+                    log::error!("Token parse error: {}", e);
+                    return HttpResponse::InternalServerError().body("Token parsing failed");
+                }
+            },
+            Err(e) => {
+                log::error!("Token exchange failed: {}", e);
+                return HttpResponse::InternalServerError().body("Token exchange failed");
+            }
+        };
+
+    let user_info = match client
+        .get("https://www.googleapis.com/oauth2/v2/userinfo")
+        .bearer_auth(&token_resp.access_token)
+        .send()
+        .await
+        { 
+            Ok(resp) => match resp.json::<GoogleUser>().await {
+                Ok(info) => info,
+                Err(e) => {
+                    log::error!("Userinfo parse error: {}", e);
+                    return HttpResponse::InternalServerError().body("Failed to parse user info");
+                }
+            },
+            Err(e) => {
+                log::error!("Failed to fetch userinfo: {}", e);
+                return HttpResponse::InternalServerError().body("Failed to fetch user info");
+            }
+        };
+
+    if let Err(e) = session.insert("user_email", &user_info.email) {
+        log::error!("Session insert error: {}", e);
     }
+
+    if let Err(e) = session.insert("user_name", &user_info.name) {
+        log::error!("Session insert error: {}", e);
+    }
+
+    if let Err(e) = Identity::login(&request.extensions(), user_info.email.clone()) {
+        log::error!("Identity login error: {}", e);
+        return HttpResponse::InternalServerError().body("Login failed");
+    }
+
+    let redirect_url = match query.get("state") {
+        Some(encoded) => match percent_decode_str(encoded).decode_utf8() {
+            Ok(decoded) => decoded.into_owned(),
+            Err(_) => "/".to_string(),
+        },
+        None => "/".to_string(),
+    };
+
+    HttpResponse::Found()
+        .append_header((header::LOCATION, redirect_url))
+        .finish()
 }
 
 #[get("/useraccount/logout")]

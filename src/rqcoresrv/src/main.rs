@@ -158,7 +158,13 @@ fn is_taconite_domain(ctx: &actix_web::guard::GuardContext) -> bool {
 }
 
 fn actix_websrv_run(runtime_info: Arc<RuntimeInfo>, server_workers: usize) -> std::io::Result<(actix_web::dev::Server, ServerHandle)> {
-    let rqcore_config = user_account::load_rqcore_config();
+    let rqcore_config = match user_account::load_rqcore_config() {
+    Ok(rq_config) => rq_config,
+    Err(err) => {
+            log::error!("Config load error: {}", err);
+            return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "Server configuration error"));
+        }
+    };
     let secret_key = Key::from(&general_purpose::STANDARD.decode(&rqcore_config.api_secret_code).expect("Invalid Base64 key"),);
     let runtime_info_for_server = runtime_info;
     HTTP_REQUEST_LOGS.set(Arc::new(HttpRequestLogs::new())).expect("REQUEST_LOGS already initialized");
