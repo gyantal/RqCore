@@ -30,7 +30,6 @@ use base64::{engine::general_purpose, Engine};
 use crate::{broker_common::brokers_watcher::RQ_BROKERS_WATCHER};
 use crate::services::rqtask_scheduler::{RQ_TASK_SCHEDULER, HeartbeatTask, FastRunnerPqpTask, FastRunnerApTask};
 use crate::middleware::{ user_account, server_diagnostics::{self}, http_request_logger::{self, HTTP_REQUEST_LOGS, HttpRequestLogs, http_request_logger_middleware}};
-use crate::test_websocket::{test_ws};
 pub static SERVER_APP_START_TIME: OnceLock<DateTime<Utc>> = OnceLock::new();
 
 // use rqcommon::sensitive_config_folder_path;
@@ -51,8 +50,8 @@ mod broker_common {
     pub mod brokers_watcher;
 }
 
-mod test_websocket {
-    pub mod test_ws;
+mod test_ws {
+    include!("../src_webapps/test_websocket/test_ws.rs"); // import test_ws.rs file from src_webapps folder
 }
 
 // SNI (Server Name Indication): the hostname sent by the client. Used for selecting HTTPS cert.

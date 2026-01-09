@@ -2,10 +2,10 @@
 <head>
     <title>RqCore v. 0.1.2</title>
     <style>
-        .app-title img {
+        img {
             width: 32px;
             height: 32px;
-            vertical-align: middle;
+            vertical-align: text-top;
         }
 
         .grid-container {
@@ -55,12 +55,16 @@
             transform: translateX(4px);
         }
 
-        .dashboard-item img {
-            width: 25px;
-            height: 25px;
+        .dashboard-item img, .dashboard-item svg {
+            width: 24px;
+            height: 24px;
             object-fit: contain;
             vertical-align: middle;
-            margin-right: 6px;
+            margin-right: 2px;
+        }
+
+        .dashboard-item svg {
+            margin: 0px;
         }
 
         a {
@@ -73,7 +77,7 @@
         }
     </style>
 </head>
-<h1 class="app-title"><img src="favicon.ico">RqCore</h1>
+<h1><img src="favicon.ico">RqCore</h1>
 <!-- <img src="taconite/images/taconite02_s.jpg"> -->
 <body style="font-family: Arial; text-align: center; margin-top: 8px;">
     <div class="grid-container">
@@ -106,7 +110,14 @@
             <h3>Websites</h3>
             <div class="dashboard-item"><a href="https://sqcore.net/"><img src="favicon.ico">SqCore</a></div>
             <div class="dashboard-item"><a href="https://www.snifferquant.com/dac/"><img src="favicon.ico">DAC</a></div>
-            <div class="dashboard-item"><a href="https://thetaconite.com/"><img src="favicon.ico">Taconite</a></div>
+            <div class="dashboard-item">
+                <a href="https://thetaconite.com/">
+                    <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+                        <path d = "M50 5 L50 55 L20 55 L50 15 Z M50 20 L80 55 L50 55 Z M10 60 L90 60 L75 80 L25 80 Z" fill="none" stroke="currentColor" stroke-width="3"/>
+                    </svg>
+                    Taconite
+                </a>
+            </div>
         </div>
     </div><br>
     <a href="/index_dev.html"><b>Developer Dashboard</b></a>

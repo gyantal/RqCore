@@ -23,7 +23,7 @@ pub async fn test_websocket(req: HttpRequest, body: actix_web::web::Payload,) ->
                 println!("WS error: {:?}", e);
                 break;
             }
-                _ => {}
+            _ => {}
             }
         }
     });
