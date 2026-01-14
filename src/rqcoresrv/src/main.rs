@@ -22,6 +22,8 @@ use rustls::crypto::aws_lc_rs::sign::any_supported_type;
 use rustls_pemfile;
 use rustls::{ServerConfig};
 use chrono::{Utc, DateTime};
+use once_cell::sync::Lazy;
+use std::collections::HashMap;
 
 use actix_identity::{IdentityMiddleware};
 use actix_session::{storage::CookieSessionStore, config::PersistentSession, SessionMiddleware};
@@ -33,7 +35,17 @@ use crate::middleware::{ user_account, server_diagnostics::{self}, http_request_
 pub static SERVER_APP_START_TIME: OnceLock<DateTime<Utc>> = OnceLock::new();
 
 // use rqcommon::sensitive_config_folder_path;
-use rqcommon::utils::runningenv::sensitive_config_folder_path;
+use rqcommon::utils::runningenv::{sensitive_config_folder_path, load_rqcore_config, RqCoreConfig};
+
+pub static RQCORE_CONFIG: Lazy<RqCoreConfig> = Lazy::new(|| {
+    match load_rqcore_config() {
+        Ok(cfg) => cfg,
+        Err(err) => {
+            log::error!("RqCore config not loaded: {}", err);
+            HashMap::new()
+        }
+    }
+});
 
 mod services {
     pub mod rqtask_scheduler;
@@ -157,14 +169,8 @@ fn is_taconite_domain(ctx: &actix_web::guard::GuardContext) -> bool {
 }
 
 fn actix_websrv_run(runtime_info: Arc<RuntimeInfo>, server_workers: usize) -> std::io::Result<(actix_web::dev::Server, ServerHandle)> {
-    let rqcore_config = match user_account::load_rqcore_config() {
-    Ok(rq_config) => rq_config,
-    Err(err) => {
-            log::error!("Config load error: {}", err);
-            return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "Server configuration error"));
-        }
-    };
-    let secret_key = Key::from(&general_purpose::STANDARD.decode(&rqcore_config.api_secret_code).expect("Invalid Base64 key"),);
+    let api_secret = RQCORE_CONFIG["api_secret_code"].as_str();
+    let secret_key = Key::from(&general_purpose::STANDARD.decode(api_secret).expect("Invalid Base64 key"),);
     let runtime_info_for_server = runtime_info;
     HTTP_REQUEST_LOGS.set(Arc::new(HttpRequestLogs::new())).expect("REQUEST_LOGS already initialized");
 

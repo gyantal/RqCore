@@ -7,10 +7,9 @@ use reqwest::Client;
 use serde::Deserialize;
 use std::collections::HashMap;
 use percent_encoding::{percent_encode, percent_decode_str, NON_ALPHANUMERIC};
-use std::{path::Path, fs,};
+use std::{path::Path};
 
-// use rqcommon::sensitive_config_folder_path;
-use rqcommon::utils::runningenv::sensitive_config_folder_path;
+use crate::RQCORE_CONFIG;
 
 // Steps to create Google OAuth Client ID for a web app:
 // 1. Go to https://console.cloud.google.com (with gya***l1@gmail.com) and create/select a project.
@@ -32,56 +31,6 @@ struct GoogleUser {
     name: String,
 }
 
-#[derive(Debug, Clone)]
-pub struct RqCoreConfig {
-    pub google_client_id: String,
-    pub google_client_secret: String,
-    pub api_secret_code: String,
-}
-
-pub fn load_rqcore_config() -> Result<RqCoreConfig, String> {
-    let sensitive_config_folder_path = sensitive_config_folder_path();
-    let rqcore_config_path = format!("{}rqcore.config", sensitive_config_folder_path);
-
-    let content = match fs::read_to_string(&rqcore_config_path) {
-    Ok(content) => content,
-    Err(err) => {
-        log::error!("Failed to read config file '{}': {}", rqcore_config_path, err);
-        return Err("Configuration file missing or unreadable".into());
-        }
-    };
-
-    let mut google_client_id = String::new();
-    let mut google_client_secret = String::new();
-    let mut api_secret_code = String::new();
-
-    for line in content.lines() {
-        let line = line.trim();
-
-        if line.is_empty() || line.starts_with('#') { continue; }
-        if let Some((key, value)) = line.split_once('=') {
-            match key.trim() {
-                "google_client_id" => google_client_id = value.trim().to_string(),
-                "google_client_secret" => google_client_secret = value.trim().to_string(),
-                "api_secret_code" => api_secret_code = value.trim().to_string(),
-                _ => {} // ignore unknown keys
-            }
-        }
-    }
-
-    if google_client_id.is_empty() {
-        return Err("Missing 'google_client_id' in rqcore.config".into());
-    }
-    if google_client_secret.is_empty() {
-        return Err("Missing 'google_client_secret' in rqcore.config".into());
-    }
-    if api_secret_code.is_empty() {
-        return Err("Missing 'api_secret_code' in rqcore.config".into());
-    }
-
-    Ok(RqCoreConfig {google_client_id, google_client_secret, api_secret_code, })
-}
-
 fn get_google_redirect_uri(request: &HttpRequest) -> String {
     let conn_info = request.connection_info().clone();
     let scheme = conn_info.scheme().to_string();
@@ -98,17 +47,7 @@ pub async fn login(request: HttpRequest, id: Option<Identity>, query: Query<Hash
             .finish();
     }
 
-    let rqcore_config = match load_rqcore_config() {
-        Ok(rq_config) => rq_config,
-        Err(err) => {
-            log::error!("Config error during login: {}", err);
-
-            return HttpResponse::InternalServerError()
-                .content_type("text/plain")
-                .body("Authentication is temporarily unavailable.");
-        }
-    };
-    let client_id = &rqcore_config.google_client_id;
+    let client_id = RQCORE_CONFIG["google_client_id"].as_str();
     let return_url = query.get("returnUrl").cloned().unwrap_or("/".to_string());
     let redirect_uri = get_google_redirect_uri(&request);
 
@@ -129,24 +68,13 @@ pub async fn google_callback(request: HttpRequest, query: Query<HashMap<String, 
             return HttpResponse::BadRequest().content_type("text/plain").body("Missing authorization code");
         }
     };
-
-    let rqcore_config = match load_rqcore_config() {
-        Ok(rq_config) => rq_config,
-        Err(err) => {
-            log::error!("Config error during Google callback: {}", err);
-            return HttpResponse::InternalServerError()
-                .content_type("text/plain")
-                .body("Authentication configuration error.");
-        }
-    };
-
     let redirect_uri = get_google_redirect_uri(&request);
 
     let client = Client::new();
     let params = [
         ("code", code.as_str()),
-        ("client_id", rqcore_config.google_client_id.as_str()),
-        ("client_secret", rqcore_config.google_client_secret.as_str()),
+        ("client_id", RQCORE_CONFIG["google_client_id"].as_str()),
+        ("client_secret", RQCORE_CONFIG["google_client_secret"].as_str()),
         ("redirect_uri", redirect_uri.as_str()),
         ("grant_type", "authorization_code"),
     ];

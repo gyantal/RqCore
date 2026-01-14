@@ -7,3 +7,4 @@ edition = "2024"
 path = "src/lib.rs"
 
 [dependencies]
+log = "0.4.28"

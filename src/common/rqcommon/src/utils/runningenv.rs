@@ -1,5 +1,7 @@
-use std::env;
+use std::{collections::HashMap, env, fs,};
+use log;
 
+pub type RqCoreConfig = HashMap<String, String>;
 /// Returns the path to the sensitive configuration folder based on the current OS and user.
 /// 
 /// On Windows, uses USERDOMAIN to identify the machine.
@@ -25,4 +27,34 @@ pub fn sensitive_config_folder_path() -> String {
         let username = env::var("LOGNAME").expect("Failed to get LOGNAME environment variable");
         format!("/home/{}/RQ/sensitive_data/", username) // e.g. "/home/rquser/RQ/sensitive_data/https_certs"
     }
+}
+
+pub fn load_rqcore_config() -> Result<RqCoreConfig, String> {
+    let sensitive_config_folder_path = sensitive_config_folder_path();
+    let rqcore_config_path = format!("{}rqcore.config", sensitive_config_folder_path);
+
+    let content = match fs::read_to_string(&rqcore_config_path) {
+    Ok(content) => content,
+    Err(err) => {
+        log::error!("Failed to read config file '{}': {}", rqcore_config_path, err);
+        return Err("Configuration file missing or unreadable".into());
+        }
+    };
+
+    let mut rqconfig = HashMap::new();
+
+    for (line_no, line) in content.lines().enumerate() {
+        let line = line.trim();
+
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+
+        let (key, value) = line.split_once('=')
+            .ok_or_else(|| format!("Invalid config format at line {}", line_no + 1))?;
+
+        rqconfig.insert(key.trim().to_string(), value.trim().to_string(),);
+    }
+
+    Ok(rqconfig)
 }
