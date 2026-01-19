@@ -482,7 +482,8 @@ impl FastRunner {
                 // Limit buy order at 4.5% above the price. IB rejects LMT orders if the lmt price is > 4.9% (if it is too wide)
                 // Limit buy order at 2.5% above the price. IB rejects LMT orders if the lmt price is > 2.7% (if it is too wide)
                 // "Order Canceled - reason:We cannot accept an order at a limit price at or more aggressive than"
-                .limit(((price * 1.025) * 100.0).round() / 100.0) // price must be set to max 2 decimal, otherwise IB error: "-The price does not conform to the minimum price variation for this contract.--"
+                // 2026-01-15: 2.5% is too aggressive. IB's max LMT threshold was 2.46% higher. IB cancelled the order. We have to go back to 2.1%.
+                .limit(((price * 1.021) * 100.0).round() / 100.0) // price must be set to max 2 decimal, otherwise IB error: "-The price does not conform to the minimum price variation for this contract.--"
                 .submit()
                 .await
                 .expect("order submission failed!");
@@ -507,8 +508,8 @@ impl FastRunner {
             let order_id = ib_client_gyantal.order(&contract)
                 .sell(num_shares)
                 //.market()
-                // Limit sell order at -2.5% below price
-                .limit(((price * 0.975) * 100.0).round() / 100.0) // price must be set to max 2 decimal, otherwise IB error: "-The price does not conform to the minimum price variation for this contract.--"
+                // Limit sell order at -2.1% below price
+                .limit(((price * 0.979) * 100.0).round() / 100.0) // price must be set to max 2 decimal, otherwise IB error: "-The price does not conform to the minimum price variation for this contract.--"
                 .submit()
                 .await
                 .expect("order submission failed!");
@@ -697,7 +698,7 @@ impl FastRunner {
     }
 
     fn determine_position_market_values_ap_gyantal(&self, new_buy_events: &mut Vec<TransactionEvent>) {
-        let buy_pv = 30000.0; // PV for buys
+        let buy_pv = 40000.0; // PV for buys
 
         let buy_pos_mkt_value = buy_pv / (new_buy_events.len() as f64);
         for event in new_buy_events.iter_mut() {
@@ -774,7 +775,7 @@ impl FastRunner {
             let order_id = ib_client_gyantal.order(&contract)
                 .buy(num_shares)
                 // .market()
-                .limit(((price * 1.025) * 100.0).round() / 100.0) // price must be set to max 2 decimal, otherwise IB error: "-The price does not conform to the minimum price variation for this contract.--"
+                .limit(((price * 1.021) * 100.0).round() / 100.0) // price must be set to max 2 decimal, otherwise IB error: "-The price does not conform to the minimum price variation for this contract.--"
                 .submit()
                 .await
                 .expect("order submission failed!");

@@ -169,6 +169,7 @@ fn is_taconite_domain(ctx: &actix_web::guard::GuardContext) -> bool {
     host.to_lowercase().contains("thetaconite.com")
 }
 
+// actix's bind_rustls_0_23() returns std::io::Error, so for a while, we use that as return type here as well. 
 fn actix_websrv_run(runtime_info: Arc<RuntimeInfo>, server_workers: usize) -> std::io::Result<(actix_web::dev::Server, ServerHandle)> {
     let google_api_secret = rqcore_config()
         .get("google_api_secret_code")
@@ -341,31 +342,7 @@ async fn console_menu_loop(server_handle: ServerHandle, runtime_info: Arc<Runtim
 
         match line.trim() {
             "1" => {
-                        println!("Hello. I am not crashed yet! :)");
-
-                        // testing Rust panic crash with Parse()
-                        let num_str = "a45.5";
-                        
-                        let parse_result = num_str.parse::<f64>();
-                        match parse_result {
-                            Ok(num) => {
-                                print!("test my price: {}", num);
-                            },
-                            Err(e)  => {
-                                // print!("Error {}", e);
-                                log::error!("Error {}", e); // should go to console + go to logfile
-                            }
-                        }
-
-                        // if (parse_result.is_err())
-                        // {
-                        //     log::error!("Error {}", e); // should go to console + go to logfile
-                        //     return parse_result.err(); // retur the error to the caller.
-                        // }
-                        // let num = parse_result.into_ok();
-
-                        // let num1 = num_str.parse::<f64>().unwrap();
-                        // print!("test my price: {}", num1);
+                println!("Hello. I am not crashed yet! :)");
             }
             "2" => {
                 print_runtime_info(&runtime_info);
@@ -514,7 +491,7 @@ struct RuntimeInfo {
 // So, you will not be able to use RQ_BROKERS_WATCHER's ib-clients in those new OS threads. 
 // Although you can create new ib-clients inside the new OS thread with new connectionID. (usually, it is not worth it)
 #[actix_web::main]
-async fn main() -> std::io::Result<()> {
+async fn main() -> std::io::Result<()> { // actix's bind_rustls_0_23() returns std::io::Error, so for a while, we use that as return type here as well. 
     init_log().expect("Failed to initialize logging");
     SERVER_APP_START_TIME.set(Utc::now()).ok();
     
@@ -553,6 +530,7 @@ async fn main() -> std::io::Result<()> {
     // Spawn async console menu INSIDE the Tokio runtime
     tokio::spawn(async move {
         console_menu_loop(server_handle, runtime_info).await;
+        println!("console_menu_loop() end");
     });
 
     // Keep server running

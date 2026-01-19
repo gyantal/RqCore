@@ -34,7 +34,7 @@ once_cell = "1.19"
 percent-encoding = "2"
 
 # ibapi: Async only (default features)
-ibapi = "2.5"
+ibapi = "2.6"
 # Async + blocking together
 # ibapi = { version = "2.0", default-features = false, features = ["sync", "async"] }
 

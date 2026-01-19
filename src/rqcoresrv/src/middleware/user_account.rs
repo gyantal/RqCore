@@ -206,7 +206,7 @@ pub async fn authorized_sample(session: Session) -> impl Responder {
     }
 }
 
-#[get("/")]
+#[get("/")] // Without declaring it, this is also called for "/index.html", which is a standard practice.
 pub async fn root_index(http_req: HttpRequest, id: Option<Identity>, session: Session) -> impl Responder {
     let host = http_req.connection_info().host().to_string();
     let is_logged_in = id.as_ref().is_some_and(|i| i.id().is_ok());

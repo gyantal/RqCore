@@ -34,10 +34,10 @@ pub fn load_rqcore_config() -> Result<RqCoreConfig, String> {
     let rqcore_config_path = format!("{}rqcore.config", sensitive_config_folder_path);
 
     let content = match fs::read_to_string(&rqcore_config_path) {
-    Ok(content) => content,
-    Err(err) => {
-        log::error!("Failed to read config file '{}': {}", rqcore_config_path, err);
-        return Err("Configuration file missing or unreadable".into());
+        Ok(content) => content,
+        Err(err) => {
+            log::error!("Failed to read config file '{}': {}", rqcore_config_path, err);
+            return Err("Configuration file missing or unreadable".into());
         }
     };
 

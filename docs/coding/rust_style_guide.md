@@ -34,4 +34,89 @@ if !self.is_trading_allowed
     { continue; }
 
 
+## How to do proper logging without unwrap() crashing at errors
 
+This pattern can be **used for `Result<T, T::Err>` (Ok, Err) and `Option<T>` (Some, None)** as well.
+Aims:
+  - 1. No panics in production code. No unwrap() or expect() that can panic the whole process.
+  - 2. Try to avoid nested scopes as much as possible, to keep code readable.
+  - 3. Keep code efficient, avoid unnecessary computations.
+
+The following 5 programming patterns can be considered. **Use the first usually (if Err is needed)**, sometimes the second (if Err is not needed), the third C# style, just rarely.
+
+```rust
+'block_label: { // the code block scope can be labelled to use in break statements
+
+let num_str = "a45.5";
+// let num1 = num_str.parse::<f64>().unwrap(); // yes, this will panic and crash the whole process
+// print!("test my price: {}", num1);
+
+// 1. This is a good, efficient pattern to handle errors without panicking. 7 lines. Computationally optimal. And can continue the program flow afterwards. And there is no safe .unwrap() that stops the reader to think.
+// *** Usage: Prefer this pattern in most cases.
+let num: f64 = match num_str.parse::<f64>() {
+    Ok(v) => v, //Ok() branch can be moved after Err(), but nobody does that usually.
+    Err(e) => {
+        log::error!("Error 1 {}", e); // error() go to console too; warn(), log() go only to logfile depend on logLevel
+        break 'block_label; // return or "return e" or break (from inner loop) or break 'label (break from labelled block). Early return to avoid crashing.
+    }
+}; // num is available after this to continue program flow
+print!("Parsed number: {}", num);
+
+// 2. This is a pattern with 'let Ok()', not with 'match'. It is only good if we don't need the error object. Only 6 lines. Computationally optimal as well.
+// *** Usage: If error object is not needed, this pattern is 1 line shorter.
+let num =if let Ok(v) = num_str.parse::<f64>() {
+    v
+} else { // here we don't have the error object
+    log::error!("Error 2 parsing number from string: {}", num_str);
+    break 'block_label; // return or "return e" or break (from inner loop) or break 'label (break from labelled block). Early return to avoid crashing.
+};
+print!("Parsed number: {}", num);
+
+// 3. C# style. This is a pattern with 'let Err()', not with 'match' and using safe .unwrap(). Only 6 lines. This is better than the parse_result.is_err() version, because that needs to get the error with another 1 line.
+// Better to avoid it. Because later, it will be dificult to read the code and see a lot of .unwrap().
+// ** Usage: not preferred, but we can accept this in the codebase ONLY IF there is a comment why unwrap() is safe here.
+let parse_result = num_str.parse::<f64>();
+if let Err(e) = parse_result {
+    log::error!("Error 3 parsing number from string: {}. Error: {}", num_str, e);
+    break 'block_label; // return or "return e" or break (from inner loop) or break 'label (break from labelled block). Early return to avoid crashing.
+}
+let num = parse_result.unwrap(); // safe to unwrap() or expect() now, because Err is handled 4 lines above.
+print!("Parsed number: {}", num);
+
+// 4. Same, but using .unwrap(), which is safe if we are sure it is not an error. Same 7 lines, but more compute on parse_result.
+// * Usage: don't use this, as the previous 'let Err()' version is the same, but 1 line shorter.
+let parse_result = num_str.parse::<f64>();
+if parse_result.is_err() {
+    let e = parse_result.err().unwrap(); // get the error object
+    log::error!("Error 4 {}", e); // error() go to console too; warn(), log() go only to logfile depend on logLevel
+    return; // return or "return e" or break (from inner loop) or break 'label (break from labelled block). Early return to avoid crashing.
+}
+let num = parse_result.unwrap(); // safe to unwrap() or expect() now, because Err is handled 4 lines above. You can use unwrap() and expect() if a comments assures that it is safe.
+// let num = parse_result.into_ok(); // into_ok() or unwrap_infallible() cannot be used as (ParseFloatError) is not infallible - it can occur if parsing fails.
+print!("Parsed number: {}", num);
+
+// 5. In Rust, the ? operator is designed precisely for propagating errors by returning early from the function 
+// with the Err variant, without logging or panicking—it simply hands the error back to the caller. 
+// This only works if your function's return type error is compatible with the occured error.
+let value = num_str.parse::<f64>()?;
+
+// 6. If the called function generates an Option<T>, but our function has to return a Result<T, ErrString>, 
+// then this pattern can be used to generate an error string.
+// ok_or_else() transforms the Option<T> into a Result<T, E>, mapping Some(v) to Ok(v) and None to Err(err())
+let (key, value) = line.split_once('=')
+    .ok_or_else(|| format!("Invalid config format at line {}", line_no + 1))?;
+
+// 7. If the called function generates an Result<T1,Err1>, but our function has to return a Result<T2, Err2>,
+// so the error types has to be transformed, thes this pattern can be used to 'convert' Err2 to Err1 type:
+let num: f64 = num_str.parse::<f64>().or(Err1("early error"))?;
+
+// 8. If we have to handle errors, but don't want to return errors to the caller, then instead of expect() or unwrap()
+// use unwrap_or_default(), unwrap_or(value) or unwrap_or_else(function_generating_value)
+// Rust doc:
+// fn expect(self, msg: &str) -> f64
+// Returns the contained [Ok] value, consuming the self value.
+// Because this function may panic, its use is generally discouraged. 
+// Instead, prefer to use pattern matching and handle the [Err] case explicitly, 
+// or call unwrap_or, unwrap_or_else, or unwrap_or_default.
+}
+```
