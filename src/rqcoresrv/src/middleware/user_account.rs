@@ -9,8 +9,8 @@ use std::collections::HashMap;
 use percent_encoding::{percent_encode, percent_decode_str, NON_ALPHANUMERIC};
 use std::{path::Path};
 
-use crate::RQCORE_CONFIG;
-
+use crate::rqcore_config;
+use rqcommon::utils::runningenv::{RqCoreConfig};
 // Steps to create Google OAuth Client ID for a web app:
 // 1. Go to https://console.cloud.google.com (with gya***l1@gmail.com) and create/select a project.
 // 2. Enable "Google Identity Services / OAuth 2.0" API under APIs & Services → Library.
@@ -47,13 +47,20 @@ pub async fn login(request: HttpRequest, id: Option<Identity>, query: Query<Hash
             .finish();
     }
 
-    let client_id = RQCORE_CONFIG["google_client_id"].as_str();
+    let google_client_id = match get_rqconfig("google_client_id", rqcore_config()) {
+        Ok(value) => value,
+        Err(e) => {
+        log::error!("{}", e);
+        return HttpResponse::InternalServerError()
+            .body("Server configuration error");
+        }
+    };
     let return_url = query.get("returnUrl").cloned().unwrap_or("/".to_string());
     let redirect_uri = get_google_redirect_uri(&request);
 
     let scope = percent_encode(b"https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/userinfo.profile",NON_ALPHANUMERIC).to_string();
     let state = percent_encode(return_url.as_bytes(), NON_ALPHANUMERIC).to_string();
-    let auth_url = format!("https://accounts.google.com/o/oauth2/v2/auth?client_id={}&redirect_uri={}&response_type=code&scope={}&access_type=offline&prompt=consent&state={}", client_id, redirect_uri, scope, state);
+    let auth_url = format!("https://accounts.google.com/o/oauth2/v2/auth?client_id={}&redirect_uri={}&response_type=code&scope={}&access_type=offline&prompt=consent&state={}", google_client_id, redirect_uri, scope, state);
 
     HttpResponse::Found()
         .append_header(("Location", auth_url))
@@ -69,12 +76,28 @@ pub async fn google_callback(request: HttpRequest, query: Query<HashMap<String, 
         }
     };
     let redirect_uri = get_google_redirect_uri(&request);
+    let google_client_id = match get_rqconfig("google_client_id", rqcore_config()) {
+        Ok(value) => value,
+        Err(e) => {
+        log::error!("{}", e);
+        return HttpResponse::InternalServerError()
+            .body("Server configuration error");
+        }
+    };
+    let google_client_secret = match get_rqconfig("google_client_secret", rqcore_config()) {
+        Ok(value) => value,
+        Err(e) => {
+        log::error!("{}", e);
+        return HttpResponse::InternalServerError()
+            .body("Server configuration error");
+        }
+    };
 
     let client = Client::new();
     let params = [
         ("code", code.as_str()),
-        ("client_id", RQCORE_CONFIG["google_client_id"].as_str()),
-        ("client_secret", RQCORE_CONFIG["google_client_secret"].as_str()),
+        ("client_id", google_client_id),
+        ("client_secret", google_client_secret),
         ("redirect_uri", redirect_uri.as_str()),
         ("grant_type", "authorization_code"),
     ];
@@ -222,10 +245,10 @@ pub async fn root_index(http_req: HttpRequest, id: Option<Identity>, session: Se
         .body(html)
 }
 
-#[get("/webserver/ping")]
-pub async fn webserver_ping() -> impl Responder {
-    use chrono::Utc;
-    HttpResponse::Ok()
-        .content_type("text/html")
-        .body(format!("<h3>Pong! {}</h3>", Utc::now().format("%Y-%m-%d %H:%M:%S")))
+fn get_rqconfig<'a>(key: &str, rqconfig: &'a RqCoreConfig,) -> Result<&'a str, std::io::Error> {
+    rqconfig.get(key)
+        .map(String::as_str)
+        .ok_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::InvalidInput,format!("Missing RqCore config key: {}", key),)
+    })
 }

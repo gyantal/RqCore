@@ -22,30 +22,31 @@ use rustls::crypto::aws_lc_rs::sign::any_supported_type;
 use rustls_pemfile;
 use rustls::{ServerConfig};
 use chrono::{Utc, DateTime};
-use once_cell::sync::Lazy;
 use std::collections::HashMap;
 
 use actix_identity::{IdentityMiddleware};
 use actix_session::{storage::CookieSessionStore, config::PersistentSession, SessionMiddleware};
-use base64::{engine::general_purpose, Engine};
 
 use crate::{broker_common::brokers_watcher::RQ_BROKERS_WATCHER};
 use crate::services::rqtask_scheduler::{RQ_TASK_SCHEDULER, HeartbeatTask, FastRunnerPqpTask, FastRunnerApTask};
 use crate::middleware::{ user_account, server_diagnostics::{self}, http_request_logger::{self, HTTP_REQUEST_LOGS, HttpRequestLogs, http_request_logger_middleware}};
 pub static SERVER_APP_START_TIME: OnceLock<DateTime<Utc>> = OnceLock::new();
+pub static RQCORE_CONFIG: OnceLock<RqCoreConfig> = OnceLock::new();
 
 // use rqcommon::sensitive_config_folder_path;
 use rqcommon::utils::runningenv::{sensitive_config_folder_path, load_rqcore_config, RqCoreConfig};
 
-pub static RQCORE_CONFIG: Lazy<RqCoreConfig> = Lazy::new(|| {
-    match load_rqcore_config() {
-        Ok(cfg) => cfg,
-        Err(err) => {
-            log::error!("RqCore config not loaded: {}", err);
-            HashMap::new()
+pub fn rqcore_config() -> &'static RqCoreConfig {
+    RQCORE_CONFIG.get_or_init(|| {
+        match load_rqcore_config() {
+            Ok(cfg) => cfg,
+            Err(err) => {
+                log::error!("RqCore config not loaded: {}", err);
+                HashMap::new()
+            }
         }
-    }
-});
+    })
+}
 
 mod services {
     pub mod rqtask_scheduler;
@@ -169,8 +170,14 @@ fn is_taconite_domain(ctx: &actix_web::guard::GuardContext) -> bool {
 }
 
 fn actix_websrv_run(runtime_info: Arc<RuntimeInfo>, server_workers: usize) -> std::io::Result<(actix_web::dev::Server, ServerHandle)> {
-    let api_secret = RQCORE_CONFIG["api_secret_code"].as_str();
-    let secret_key = Key::from(&general_purpose::STANDARD.decode(api_secret).expect("Invalid Base64 key"),);
+    let google_api_secret = rqcore_config()
+        .get("google_api_secret_code")
+        .map(String::as_str)
+        .ok_or_else(|| {
+            log::error!("Missing RqCore config key: google_api_secret_code");
+            io::Error::new(io::ErrorKind::InvalidInput, "Missing google_api_secret_code",)
+    })?;
+    let secret_key = Key::from(google_api_secret.as_bytes());
     let runtime_info_for_server = runtime_info;
     HTTP_REQUEST_LOGS.set(Arc::new(HttpRequestLogs::new())).expect("REQUEST_LOGS already initialized");
 
@@ -266,7 +273,7 @@ fn actix_websrv_run(runtime_info: Arc<RuntimeInfo>, server_workers: usize) -> st
             .service(user_account::user_infor)
             .service(user_account::authorized_sample)
             .service(user_account::root_index)
-            .service(user_account::webserver_ping)
+            .service(server_diagnostics::webserver_ping)
             .service(server_diagnostics::server_diagnostics)
             .service(http_request_logger::http_request_activity_log)
             .service(test_ws::test_websocket)

@@ -32,3 +32,11 @@ async fn server_diagnostics() -> impl Responder {
 
     HttpResponse::Ok().content_type(ContentType::html()).body(sb)
 }
+
+#[get("/webserver/ping")]
+pub async fn webserver_ping() -> impl Responder {
+    use chrono::Utc;
+    HttpResponse::Ok()
+        .content_type("text/html")
+        .body(format!("<h3>Pong! {}</h3>", Utc::now().format("%Y-%m-%d %H:%M:%S")))
+}
