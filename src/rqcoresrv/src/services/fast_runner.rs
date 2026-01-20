@@ -240,7 +240,8 @@ impl FastRunner {
         // Calculate target_action_date from the current date (last Monday).
         // TODO: This can be a problem if Monday is a stock market holiday. We will miss that date. But OK for now.
         let now_utc = Utc::now().date_naive();
-        let days_to_subtract = now_utc.weekday().num_days_from_monday() as i64;
+        let days_to_subtract = now_utc.weekday().days_since(chrono::Weekday::Mon) as i64; // equivalent to num_days_from_monday()
+        // let days_to_subtract = now_utc.weekday().days_since(chrono::Weekday::Tue) as i64; // If there is USA bank holiday on Monday, then use this
         let real_rebalance_date = now_utc - chrono::Duration::days(days_to_subtract);
         let target_action_date = real_rebalance_date.format("%Y-%m-%d").to_string();
         // let target_action_date = "2025-11-03".to_string(); // Monday date

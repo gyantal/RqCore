@@ -121,7 +121,7 @@ impl RqTask for FastRunnerPqpTask {
             println!("{} FastRunnerPqpTask run() started", Utc::now().format("%H:%M:%S%.3f"));
             let utc_now = Utc::now().date_naive();
             let is_run_today = utc_now.weekday() == chrono::Weekday::Mon;
-            // let is_run_today = true; // run every day for testing
+            // let is_run_today = true; // run every day for testing. Also use this if PQP day is not Monday and it is run manually.
             if is_run_today {
                 println!("FastRunnerPqpTask run() starts the loop");
                 let tz_et = Eastern;

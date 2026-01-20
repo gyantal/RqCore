@@ -40,7 +40,7 @@ fi
 
 cd $ROOT
 
-# 2. Compile and test
+# 2.1 Rust: Compile and test
 echo "*** Compiling in release mode..."
 cd $ROOT/staging/src/rqcoresrv
 # If running in crontab, $PATH is minimalist, so we need to specify full path to cargo. Otherwise "cargo: command not found"
@@ -53,6 +53,10 @@ echo "*** Running tests..."
     #echo "*** Tests failed. Exiting deployment."
 #    exit 1
 #fi
+
+# 2.2 TS: Frontend build: Use NodeJS to convert and minify TS to JS
+npm install 2>&1
+npm run build 2>&1
 
 cd $ROOT
 
