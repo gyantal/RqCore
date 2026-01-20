@@ -7,9 +7,9 @@
     "esModuleInterop": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
-    "rootDir": "src_webapps",
+    "rootDir": "src/webapps",
     "outDir": "dist"
   },
-  "include": ["src_webapps/**/*"],
+  "include": ["src/webapps/**/*"],
   "exclude": ["dist"]
 }

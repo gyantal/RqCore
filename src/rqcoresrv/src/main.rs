@@ -72,8 +72,8 @@ mod broker_common {
     pub mod brokers_watcher;
 }
 
-mod test_ws {
-    include!("../src_webapps/test_websocket/test_ws.rs"); // import test_ws.rs file from src_webapps folder
+mod webapps {
+    pub mod test_websocket;
 }
 
 // SNI (Server Name Indication): the hostname sent by the client. Used for selecting HTTPS cert.
@@ -287,7 +287,7 @@ fn actix_websrv_run(runtime_info: Arc<RuntimeInfo>, server_workers: usize) -> st
             .service(server_diagnostics::webserver_ping)
             .service(server_diagnostics::server_diagnostics)
             .service(http_request_logger::http_request_activity_log)
-            .service(test_ws::test_websocket)
+            .service(webapps::test_websocket::test_ws::test_websocket)
         // We can serve many domains, each having its own subfolder in ./static/
         // However, when we rewritten path in a middleware (from /index.html to /taconite/index.html), it was not being used by Actix Files
         // Because the main Actix -Files service is mounted at the root "/" and doesn't know (?) how to handle the "/taconite" prefix. 
