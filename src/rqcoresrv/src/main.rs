@@ -30,14 +30,23 @@ use actix_session::{storage::CookieSessionStore, config::PersistentSession, Sess
 use crate::{broker_common::brokers_watcher::RQ_BROKERS_WATCHER};
 use crate::services::rqtask_scheduler::{RQ_TASK_SCHEDULER, HeartbeatTask, FastRunnerPqpTask, FastRunnerApTask};
 use crate::middleware::{ user_account, server_diagnostics::{self}, http_request_logger::{self, HTTP_REQUEST_LOGS, HttpRequestLogs, http_request_logger_middleware}};
-pub static SERVER_APP_START_TIME: OnceLock<DateTime<Utc>> = OnceLock::new();
-pub static RQCORE_CONFIG: OnceLock<RqCoreConfig> = OnceLock::new();
 
-// use rqcommon::sensitive_config_folder_path;
 use rqcommon::utils::runningenv::{sensitive_config_folder_path, load_rqcore_config, RqCoreConfig};
 
-pub fn rqcore_config() -> &'static RqCoreConfig {
-    RQCORE_CONFIG.get_or_init(|| {
+pub static SERVER_APP_START_TIME: OnceLock<DateTime<Utc>> = OnceLock::new();
+
+// Maybe this is the best way to handle global static. With a get_rqcore_config() supplier function, rather than accessing the global static variable directly.
+// because RQCORE_CONFIG_LOCK.get() returns an Option<T>. Even though we 'know' that it cannot be None, because we initialized it,
+// Rust simply doesn't believe, doesn't rely on coder's judgement. So, RQCORE_CONFIG_LOCK.get(), we have to do 'match' function for Some, None.
+// Which makes the code much uglier, than just using an get_rqcore_config() supplier function (that performs the 'match' internally))
+// Option 1*: get_rqcore_config() supplier function:
+// "let google_api_secret= match get_rqcore_config().get("google_api_secret_code") {"
+// Option 2: use RQCORE_CONFIG_LOCK directly. And flatten the double nested IF scopes by chaining the Options using and_then()
+// let google_api_secret= match RQCORE_CONFIG_LOCK.get().and_then(|rq_config| rq_config.get("google_api_secret_code")) {
+// Both can be used, but Option1 is more readable.
+pub static RQCORE_CONFIG_LOCK: OnceLock<RqCoreConfig> = OnceLock::new();
+pub fn get_rqcore_config() -> &'static RqCoreConfig {
+    RQCORE_CONFIG_LOCK.get_or_init(|| {
         match load_rqcore_config() {
             Ok(cfg) => cfg,
             Err(err) => {
@@ -171,13 +180,14 @@ fn is_taconite_domain(ctx: &actix_web::guard::GuardContext) -> bool {
 
 // actix's bind_rustls_0_23() returns std::io::Error, so for a while, we use that as return type here as well. 
 fn actix_websrv_run(runtime_info: Arc<RuntimeInfo>, server_workers: usize) -> std::io::Result<(actix_web::dev::Server, ServerHandle)> {
-    let google_api_secret = rqcore_config()
-        .get("google_api_secret_code")
-        .map(String::as_str)
-        .ok_or_else(|| {
-            log::error!("Missing RqCore config key: google_api_secret_code");
-            io::Error::new(io::ErrorKind::InvalidInput, "Missing google_api_secret_code",)
-    })?;
+    let google_api_secret= match get_rqcore_config().get("google_api_secret_code") {
+        Some(value) => value,
+        None => {
+            log::error!("google_api_secret_code not found in config");
+            return Err(io::Error::new(io::ErrorKind::InvalidInput, "Missing google_api_secret_code",));
+        }
+    };
+
     let secret_key = Key::from(google_api_secret.as_bytes());
     let runtime_info_for_server = runtime_info;
     HTTP_REQUEST_LOGS.set(Arc::new(HttpRequestLogs::new())).expect("REQUEST_LOGS already initialized");
@@ -497,6 +507,8 @@ async fn main() -> std::io::Result<()> { // actix's bind_rustls_0_23() returns s
     
     info!("***Starting RqCoreSrv...");
     println!("main() start");
+    // Initialize the global variable RqCoreConfig now (only once), before parallel threads start to use it.
+    info!("RqCore config loaded: {} entries", get_rqcore_config().len());
 
     RQ_BROKERS_WATCHER.init().await;
 
