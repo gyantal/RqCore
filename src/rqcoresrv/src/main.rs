@@ -180,15 +180,7 @@ fn is_taconite_domain(ctx: &actix_web::guard::GuardContext) -> bool {
 
 // actix's bind_rustls_0_23() returns std::io::Error, so for a while, we use that as return type here as well. 
 fn actix_websrv_run(runtime_info: Arc<RuntimeInfo>, server_workers: usize) -> std::io::Result<(actix_web::dev::Server, ServerHandle)> {
-    let google_api_secret= match get_rqcore_config().get("google_api_secret_code") {
-        Some(value) => value,
-        None => {
-            log::error!("google_api_secret_code not found in config");
-            return Err(io::Error::new(io::ErrorKind::InvalidInput, "Missing google_api_secret_code",));
-        }
-    };
-
-    let secret_key = Key::from(google_api_secret.as_bytes());
+    let cookie_encrypt_secret_key = "A key that is long enough (64 bytes) to encrypt the session cookie content"; // any encryption code that is used to encrypt the 'session' cookie content. Minimum 64 bytes.
     let runtime_info_for_server = runtime_info;
     HTTP_REQUEST_LOGS.set(Arc::new(HttpRequestLogs::new())).expect("REQUEST_LOGS already initialized");
 
@@ -269,7 +261,7 @@ fn actix_websrv_run(runtime_info: Arc<RuntimeInfo>, server_workers: usize) -> st
             .wrap(from_fn(browser_cache_control_30_days_middleware))
             .wrap(from_fn(http_request_logger_middleware))
             .wrap(IdentityMiddleware::default()) // Enables Identity API; identity is stored inside the session.
-            .wrap(SessionMiddleware::builder(CookieSessionStore::default(), secret_key.clone()) // Uses an encrypted cookie to store the entire session.
+            .wrap(SessionMiddleware::builder(CookieSessionStore::default(), Key::from(cookie_encrypt_secret_key.as_bytes())) // Uses an encrypted cookie to store the entire session.
             .session_lifecycle(PersistentSession::default() // Makes the cookie persistent (not deleted when browser closes).
             .session_ttl(time::Duration::days(365))) // Session validity duration (365 days).
             .cookie_secure(true) // Cookie is only sent over HTTPS (required for SameSite=None).
