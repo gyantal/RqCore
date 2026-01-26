@@ -36,6 +36,10 @@ if !self.is_trading_allowed
 
 ## How to do proper logging without unwrap() crashing at errors
 
+Some notes before presenting the various code patterns.
+  - 1. In production codes (e.g. actix-web), people minimize error logging, because file writing or printing to terminal slows the execution. We can log a bit more than production codes, but we shouldn't overdo it.
+  - 2. 'Try' to avoid logging errors multiple times in nested function. If f1() calls f2() calls f3(), we don't want to log the error 3 times. Returning Error 3x times is fine. Just don't log it 3 times.
+
 This pattern can be **used for `Result<T, T::Err>` (Ok, Err) and `Option<T>` (Some, None)** as well.
 Aims:
   - 1. No panics in production code. No unwrap() or expect() that can panic the whole process.
@@ -118,5 +122,11 @@ let num: f64 = num_str.parse::<f64>().or(Err1("early error"))?;
 // Because this function may panic, its use is generally discouraged. 
 // Instead, prefer to use pattern matching and handle the [Err] case explicitly, 
 // or call unwrap_or, unwrap_or_else, or unwrap_or_default.
+
+// 9. Another way to swallow Errors is the .ok() macro
+SERVER_APP_START_TIME.set(Utc::now());
+// This raises a compiler warning: "unused `Result` that must be used. this `Result` may be an `Err` variant, which should be handled"
+// .ok() converts errors to Options, and that can be swallowed without inspecting the Error state
+SERVER_APP_START_TIME.set(Utc::now()).ok();
 }
 ```

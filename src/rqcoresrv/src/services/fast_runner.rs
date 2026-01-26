@@ -186,8 +186,8 @@ pub struct TransactionEvent {
 
 pub struct FastRunner {
     pub is_simulation: bool, // is true for simulation, false for real trading
-    pub loop_sleep_ms_simulation: u64,
-    pub loop_sleep_ms_realtrading: u64,
+    pub loop_sleep_ms_simulation: u32,
+    pub loop_sleep_ms_realtrading: u32,
     pub is_loop_active: Arc<AtomicBool>,
     pub has_trading_ever_started: bool,
     pub cookies: Option<String>,
@@ -203,8 +203,8 @@ impl FastRunner {
         Self {
             is_simulation: true, // at trading, change this to false. Also check if IbGateway is in ReadOnly mode.
 
-            loop_sleep_ms_simulation: 3750, // usually 3750
-            loop_sleep_ms_realtrading: 250, // usually 250ms (note that reqwest.client.get() is 500-700ms)
+            loop_sleep_ms_simulation: 3750, // usually 3750, that is 3.75s
+            loop_sleep_ms_realtrading: 0, // usually 250ms (note that reqwest.client.get() is 500-700ms, so we don't have to sleep much here)
             is_loop_active: Arc::new(AtomicBool::new(false)),
             has_trading_ever_started: false,
             // initialize cookies cache
@@ -399,7 +399,7 @@ impl FastRunner {
     }
 
     fn determine_position_market_values_pqp_gyantal(&self, new_buy_events: &mut Vec<TransactionEvent>, new_sell_events: &mut Vec<TransactionEvent>) {
-        let buy_pv = 40000.0; // PV for buys
+        let buy_pv = 50000.0; // PV for buys
         let sell_pv = 30000.0; // PV for sells
 
         let buy_pos_mkt_value = buy_pv / (new_buy_events.len() as f64);
@@ -466,6 +466,8 @@ impl FastRunner {
         for event in &new_buy_events {
             println!("  {} ({}, ${}, ${}, event)", event.ticker, event.company_name, event.price.as_deref().unwrap_or("N/A"), event.pos_market_value);
             let contract = Contract::stock(&event.ticker).build();
+            // print the contract details
+            print!("  Contract details: {:?}", contract); // TODO: inspect these to see if we can catch early if GMTLF is not supported by IB. "No security definition has been found for the request". In that case, don't try to get price that takes 500ms.
             let price = get_price(&ib_client_dcmain, event, &contract).await;
             if price.is_nan() { // If no price (e.g. no real-time market data for ADR, OTC), we cannot calculate nShares, not even MKT orders possible, we skip only this trade, but don't panic and do other trades
                 println!("  {} ({}, cannot determine price, skipping...)", event.ticker, event.company_name);
@@ -539,7 +541,10 @@ impl FastRunner {
                     break;
                 }
 
-                tokio::time::sleep(tokio::time::Duration::from_millis(if fast_runner2.is_simulation { fast_runner2.loop_sleep_ms_simulation } else { fast_runner2.loop_sleep_ms_realtrading })).await;
+                let sleep_ms = if fast_runner2.is_simulation { fast_runner2.loop_sleep_ms_simulation } else { fast_runner2.loop_sleep_ms_realtrading };
+                if sleep_ms > 0 {
+                    tokio::time::sleep(tokio::time::Duration::from_millis(sleep_ms.into())).await;
+                }
             }
             println!("FastRunner thread stopping");
         });
@@ -699,7 +704,7 @@ impl FastRunner {
     }
 
     fn determine_position_market_values_ap_gyantal(&self, new_buy_events: &mut Vec<TransactionEvent>) {
-        let buy_pv = 40000.0; // PV for buys
+        let buy_pv = 50000.0; // PV for buys
 
         let buy_pos_mkt_value = buy_pv / (new_buy_events.len() as f64);
         for event in new_buy_events.iter_mut() {
@@ -815,7 +820,8 @@ async fn get_price(ib_client_dcmain: &Arc<Client>, event: &TransactionEvent, con
                 },
                 // Error is raised here if we don't have realtime market data for that stock. In that case, price stays as NaN and we skip that single trade, but continue with other trades.
                 // 2025-12-22: XIACY (ADR): "Parse(5, "Invalid Real-time Query:No market data permissions for ARCAEDGE STK", "invalid float literal")"
-                Err(e) => eprintln!("Error: {e:?}"),
+                // 2026-01-26: GMTLF (IB doesn't have the stock): "Parse(5, "No security definition has been found for the request", "invalid float literal")"
+                Err(e) => eprintln!("Error in realtime_bars subscription: {e:?}"),
             }
             let elapsed_microsec = start.elapsed().as_secs_f64() * 1_000_000.0;
             println!("Elapsed Time of ib_client.realtime_bars(): {:.2}us", elapsed_microsec); // about 430-550ms first bar, then subsequent bars every 5s

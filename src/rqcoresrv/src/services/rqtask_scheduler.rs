@@ -153,7 +153,10 @@ impl RqTask for FastRunnerPqpTask {
                         break;
                     }
 
-                    tokio::time::sleep(tokio::time::Duration::from_millis(if fast_runner.is_simulation { fast_runner.loop_sleep_ms_simulation } else { fast_runner.loop_sleep_ms_realtrading })).await;
+                    let sleep_ms = if fast_runner.is_simulation { fast_runner.loop_sleep_ms_simulation } else { fast_runner.loop_sleep_ms_realtrading };
+                    if sleep_ms > 0 {
+                        tokio::time::sleep(tokio::time::Duration::from_millis(sleep_ms.into())).await;
+                    }
                 }
             }
             println!("{} FastRunnerPqpTask run() ended", Utc::now().format("%H:%M:%S%.3f"));
@@ -252,7 +255,10 @@ impl RqTask for FastRunnerApTask {
                         break;
                     }
 
-                    tokio::time::sleep(tokio::time::Duration::from_millis(if fast_runner.is_simulation { fast_runner.loop_sleep_ms_simulation } else { fast_runner.loop_sleep_ms_realtrading })).await;
+                    let sleep_ms = if fast_runner.is_simulation { fast_runner.loop_sleep_ms_simulation } else { fast_runner.loop_sleep_ms_realtrading };
+                    if sleep_ms > 0 {
+                        tokio::time::sleep(tokio::time::Duration::from_millis(sleep_ms.into())).await;
+                    }
                 }
             }
             println!("{} FastRunnerApTask run() ended", Utc::now().format("%H:%M:%S%.3f"));
