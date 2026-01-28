@@ -39,6 +39,35 @@ fn get_google_redirect_uri(request: &HttpRequest) -> String {
     format!("{scheme}://{host}/useraccount/login/callback")
 }
 
+fn get_google_oauth_config(http_req: &HttpRequest) -> Result<(String, String), HttpResponse> {
+    let host = http_req.connection_info().host().to_string();
+    let cfg = get_rqcore_config();
+
+    let (id_key, secret_key) = if host.contains("thetaconite.com") {
+        ("taconite_google_client_id", "taconite_google_client_secret")
+    } else {
+        ("rqcore_google_client_id", "rqcore_google_client_secret")
+    };
+
+    let client_id = match cfg.get(id_key) {
+        Some(value) => value.to_string(),
+        None => {
+            log::error!("{} not found in config", id_key);
+            return Err(HttpResponse::InternalServerError().body("OAuth config error"));
+        }
+    };
+
+    let client_secret = match cfg.get(secret_key) {
+        Some(value) => value.to_string(),
+        None => {
+            log::error!("{} not found in config", secret_key);
+            return Err(HttpResponse::InternalServerError().body("OAuth config error"));
+        }
+    };
+
+    Ok((client_id, client_secret))
+}
+
 #[get("/useraccount/login")]
 pub async fn login(request: HttpRequest, id: Option<Identity>, query: Query<HashMap<String, String>>) -> impl Responder { 
     if id.is_some() {
@@ -48,12 +77,9 @@ pub async fn login(request: HttpRequest, id: Option<Identity>, query: Query<Hash
             .finish();
     }
 
-    let google_client_id = match get_rqcore_config().get("google_client_id") {
-        Some(value) => value,
-        None => {
-            log::error!("google_client_id not found in config");
-            return HttpResponse::InternalServerError().body("Server configuration error");
-        }
+    let (google_client_id, _) = match get_google_oauth_config(&request) {
+        Ok(value) => value,
+        Err(resp) => return resp,
     };
     let return_url = query.get("returnUrl").cloned().unwrap_or("/".to_string());
     let redirect_uri = get_google_redirect_uri(&request);
@@ -77,26 +103,16 @@ pub async fn google_callback(request: HttpRequest, query: Query<HashMap<String, 
     };
     let redirect_uri = get_google_redirect_uri(&request);
 
-    let google_client_id = match get_rqcore_config().get("google_client_id") {
-        Some(value) => value,
-        None => {
-            log::error!("google_client_id not found in config");
-            return HttpResponse::InternalServerError().body("Server configuration error");
-        }
-    };
-    let google_client_secret = match get_rqcore_config().get("google_client_secret") {
-        Some(value) => value,
-        None => {
-            log::error!("google_client_secret not found in config");
-            return HttpResponse::InternalServerError().body("Server configuration error");
-        }
+    let (google_client_id, google_client_secret) = match get_google_oauth_config(&request) {
+        Ok(value) => value,
+        Err(resp) => return resp,
     };
 
     let client = Client::new();
     let params = [
         ("code", code.as_str()),
-        ("client_id", google_client_id),
-        ("client_secret", google_client_secret),
+        ("client_id", google_client_id.as_str()),
+        ("client_secret", google_client_secret.as_str()),
         ("redirect_uri", redirect_uri.as_str()),
         ("grant_type", "authorization_code"),
     ];
@@ -169,24 +185,33 @@ pub async fn logout(id: Option<Identity>, session: Session) -> impl Responder {
     if let Some(id) = id { id.logout(); }
     session.clear();
 
-    HttpResponse::Ok()
-        .insert_header((header::CONTENT_TYPE, "text/html"))
-        .body("<h3>Logged out</h3> <a href=\"/useraccount/login\">Login</a>")
+    HttpResponse::Found().append_header((header::LOCATION, "/")).finish()
 }
 
 #[get("/useraccount/userinfo")]
 pub async fn user_infor(session: Session) -> impl Responder {
     match session.get::<String>("user_email") {
         Ok(Some(email)) => {
-            let name = session.get::<String>("user_name")
-                .unwrap_or(Some("User".to_string()))
-                .unwrap();
+            let name = match session.get::<String>("user_name") {
+                Ok(Some(name)) => name,
+                Ok(None) => "User".to_string(), // default if not set
+                Err(err) => {
+                    log::error!("Failed to read 'user_name' from session: {}", err);
+                    return HttpResponse::InternalServerError().body("Session error");
+                }
+            };
 
             HttpResponse::Ok()
                 .insert_header((header::CONTENT_TYPE, "text/html; charset=utf-8"))
                 .body(format!("<h2>Hello, {}!</h2><p>Email: {}</p><a href=\"/useraccount/logout\">Logout</a>", name, email))
         }
-        _ => HttpResponse::Unauthorized().body("Not logged in"),
+
+        Ok(None) => HttpResponse::Unauthorized().body("Not logged in"),
+
+        Err(err) => {
+            log::error!("Failed to read 'user_email' from session: {}", err);
+            HttpResponse::InternalServerError().body("Session error")
+        }
     }
 }
 
@@ -223,23 +248,17 @@ pub async fn root_index(http_req: HttpRequest, id: Option<Identity>, session: Se
         Err(_) => return HttpResponse::NotFound().body("File not found"),
     };
 
-    // 3. If user is logged in give email + logout link
+    // 3. If user is loggedin -> give email
     if id.is_some() {
-        if let Ok(Some(email)) = session.get::<String>("user_email") {
-            // let user_email = html_escape::encode_text(&email);
-
-            let user_info_html = format!(
-                r#"<div style="margin:20px 0; font-weight:bold; z-index:10; color:#2c3e50;">
-                    {email} | <a href="/useraccount/logout">Logout</a>
-                   </div>"#
-            );
-
-            html = html.replace("</body>", &format!("{user_info_html}\n</body>")); // Insert before </body>
+        match session.get::<String>("user_email") {
+            Ok(Some(email)) => {
+                html = html.replace("{{USER_EMAIL}}", &email);
+            }
+            Ok(None) => log::warn!("Email missing in session"),
+            Err(err) => log::error!("Session error: {}", err),
         }
     }
 
     // 4. Serve the modified HTML
-    HttpResponse::Ok()
-        .content_type("text/html; charset=utf-8")
-        .body(html)
+    HttpResponse::Ok().content_type("text/html; charset=utf-8").body(html)
 }

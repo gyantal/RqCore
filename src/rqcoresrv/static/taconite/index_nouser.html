@@ -1,10 +1,39 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <title>Google Auth Demo</title>
-</head>
-<body style="font-family: Arial; text-align: center; margin-top: 80px;">
-    <h1>Login with Google</h1><a href="/useraccount/login">login</a><br>
-</body>
+<html>
+    <head>
+        <style>
+            #taconite_title {
+                font-size: 80px;
+                left: 50%;
+                top : 78%;
+            }
+
+            .login_user {
+                font-size: 22px;
+                left: 50%;
+                bottom : 10%;
+                font-weight:bold;
+            }
+
+            .common_style {
+                position: absolute;
+                transform: translate(-50%, -50%);
+                text-shadow: 4px 4px 16px #000000;
+                color: white;
+            }
+         
+            .taconite_img {
+                position: absolute;
+                margin: auto;
+                top : 0;
+                left: 0;
+                right: 0;
+                width: 100%;
+            }
+        </style>
+    </head>
+    <body>
+        <img src="/images/taconite02_s.jpg" alt="Taconite" class="taconite_img">
+        <h1 id="taconite_title" class="common_style">TACONITE</h1>
+        <div class="login_user common_style"><a href="/useraccount/login">Login</a></div>
+    </body>
 </html>

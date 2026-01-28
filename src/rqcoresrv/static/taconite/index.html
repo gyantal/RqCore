@@ -1,43 +1,39 @@
-<HTML>
-<link href='https://fonts.googleapis.com/css?family=BhuTuka Expanded One' rel='stylesheet'>
-<style>
-    h1 {
-        font-size: 80px;
-        font-family: 'Times New Roman', Times, serif;
-        font-weight: normal;
-        position: absolute;
-        left: 50%;
-        top : 75%;
-        transform: translate(-50%, -50%);
-        text-shadow: 4px 4px 16px #000000;
-        color: white;
-    }
-    .contact_style {
-        font-size: 20px;
-        position: absolute;
-        left: 3%;
-        bottom : 10%;
-        text-shadow: 4px 4px 16px #000000;
-        color: white;
-    }
-    .center_image {
-        position: absolute;
- 
-        margin: auto;
-        top : 0;
-        left: 0;
-        right: 0;
-        width: 100%;
-        
-    }
+<html>
+    <head>
+        <style>
+            #taconite_title {
+                font-size: 80px;
+                left: 50%;
+                top : 78%;
+            }
 
-    body {
-        background-color: #515053;
-    }
-</style>
-<body>
-    <img src="/images/taconite02_s.jpg" alt="Taconite" class="center_image">
-    <h1>TACONITE</h1>
-    <div class="contact_style"> Contact:info@thetaconite.com</div>
-</body>
-</HTML>
+            .login_user {
+                font-size: 22px;
+                left: 50%;
+                bottom : 10%;
+                font-weight:bold;
+            }
+
+            .common_style {
+                position: absolute;
+                transform: translate(-50%, -50%);
+                text-shadow: 4px 4px 16px #000000;
+                color: white;
+            }
+
+            .taconite_img {
+                position: absolute;
+                margin: auto;
+                top : 0;
+                left: 0;
+                right: 0;
+                width: 100%;
+            }
+        </style>
+    </head>
+    <body>
+        <img src="/images/taconite02_s.jpg" alt="Taconite" class="taconite_img">
+        <h1 id="taconite_title" class="common_style">TACONITE</h1>
+        <div class="common_style login_user">{{USER_EMAIL}} | <a class="logout" href="/useraccount/logout">Logout</a></div>
+    </body>
+</html>
