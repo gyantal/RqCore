@@ -248,7 +248,7 @@ pub async fn root_index(http_req: HttpRequest, id: Option<Identity>, session: Se
         Err(_) => return HttpResponse::NotFound().body("File not found"),
     };
 
-    // 3. If user is loggedin -> give email
+    // 3. If user is logged in -> give email
     if id.is_some() {
         match session.get::<String>("user_email") {
             Ok(Some(email)) => {
