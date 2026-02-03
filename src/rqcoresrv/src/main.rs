@@ -107,7 +107,14 @@ fn init_log() -> Result<(), Box<dyn std::error::Error>> {
     // 1. Cargo.toml: switch on "Log" compatibility: spdlog-rs = {version = "0.4.3", features = ["source-location", "log"]}
     // 2. init_log_crate_proxy();
     // 3. log::set_max_level(), otherwise 'Log crate' will not send all logs to spdlog's proxy
-    spdlog::init_log_crate_proxy().unwrap(); // This proxy forwards log:: macros to spdlog
+    spdlog::init_log_crate_proxy()?; // This proxy forwards log:: macros to spdlog
+    // Create a filter builder and parse directives (e.g., from RUST_LOG env var). Better to use env var, so we can change log levels without recompiling.
+    // set RUST_LOG= "warn,rqcoresrv=info,ibapi=info" // this sets all crates to warn, but the main crate to info.
+    // If RUST_LOG is not set, the filter that matches nothing. This means no logs are emitted. 
+    let log_crate_filter = env_filter::Builder::from_env("RUST_LOG").build();  // Or use .new("warn,rqcoresrv=info,ibapi=info") for hardcoded
+    spdlog::log_crate_proxy().set_filter(Some(log_crate_filter)); // this only filters, the log_crate's log::info!(), but the spdlog::info!() are not filtered here.
+
+    // Set the max level for the 'log crate' (this is required to allow messages through)
     log::set_max_level(log::LevelFilter::Trace); // This was the problem why spdlog::info!() appeared, but log::info!() didn't. 
 
     // Build a new logger from scratch to avoid duplication issues with the 2 default sinks
@@ -121,27 +128,27 @@ fn init_log() -> Result<(), Box<dyn std::error::Error>> {
     // # Appendix: Full List of Built-in Patterns here: https://github.com/SpriteOvO/spdlog-rs/blob/main/spdlog/src/formatter/pattern_formatter/mod.rs
     stdout_sink.set_formatter(Box::new(PatternFormatter::new(pattern!("{month}{day}T{time}.{millisecond}#{tid}|{level}|{module_path}|{payload}{eol}"))));
 
-    let file_sink = Arc::new(FileSink::builder()
+    let file_sink =FileSink::builder()
         .level_filter(LevelFilter::All)
         .path(log_filename)
-        .build()?);
+        .build()?;
     file_sink.set_formatter(Box::new(PatternFormatter::new(pattern!("{month}{day}T{time}.{millisecond}#{tid}|{level}|{logger}|{source}|{payload}{eol}"))));
 
     let logger = spdlog::Logger::builder()
         .sink(Arc::new(stdout_sink))
-        .sink(file_sink)
+        .sink( Arc::new(file_sink))
         .build()?;
     logger.set_level_filter(LevelFilter::All); // Note: there is the logger level filter, and each sink has its own level filter as well
     spdlog::set_default_logger(Arc::new(logger));
 
-    spdlog::info!("test spdlog::info()");
-    error!("test spdlog::error()");
-    debug!("test spdlog::debug() 3 + 2 = {}", 5);
+    // spdlog::info!("test spdlog::info()"); // spdlog::info!() goes through, even though RUST_LOG is not set (because that controls the log::info!())
+    // spdlog::error!("test spdlog::error()");
+    // spdlog::debug!("test spdlog::debug() 3 + 2 = {}", 5);
     
-    log::warn!("test log::warn()");
-    log::info!("test log::info()");
-    log::debug!("test log::debug()");
-    log::trace!("test log::trace() Detailed trace message");
+    // log::warn!("test log::warn()");
+    // log::info!("test log::info()");
+    // log::debug!("test log::debug()");
+    // log::trace!("test log::trace() Detailed trace message");
     Ok(())
 }
 
@@ -497,10 +504,9 @@ async fn main() -> std::io::Result<()> { // actix's bind_rustls_0_23() returns s
     init_log().expect("Failed to initialize logging");
     SERVER_APP_START_TIME.set(Utc::now()).ok();
     
-    info!("***Starting RqCoreSrv...");
-    println!("main() start");
+    spdlog::info!("***Starting RqCoreSrv...");  // spdlog::info!() goes through, even though RUST_LOG is not set (because that controls the log::info!())
     // Initialize the global variable RqCoreConfig now (only once), before parallel threads start to use it.
-    info!("RqCore config loaded: {} entries", get_rqcore_config().len());
+    spdlog::info!("RqCore config loaded: {} entries", get_rqcore_config().len());
 
     RQ_BROKERS_WATCHER.init().await;
 

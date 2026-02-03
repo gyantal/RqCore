@@ -13,6 +13,7 @@ tokio = { version = "1.0", features = ["full"] }
 # tokio   = { version = "1.48", features = ["fs", "macros", "rt-multi-thread"] }
 log = "0.4.28"
 spdlog-rs = {version = "0.5", features = ["source-location", "log"]}
+env_filter = "0.1.4" # spdlog-rs requires this for supporting env_filter::Builder::new().try_parse("RUST_LOG") using log level in env variable
 time = "0.3.43"
 chrono = { version = "0.4", features = ["serde"] }
 chrono-tz = "0.10"

@@ -12,7 +12,10 @@
       "args": [],
       "cwd": "${workspaceFolder}/src/rqcoresrv",
       "console": "integratedTerminal",
-      "preLaunchTask": "cargo build"
+      "preLaunchTask": "cargo build",
+      "env": {
+        "RUST_LOG": "warn,rqcoresrv=info,ibapi=info"  // Set default log levels for debugging
+      }
     }
   ]
 }

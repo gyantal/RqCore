@@ -290,7 +290,7 @@ impl RqTaskScheduler {
 
     pub fn start(&self) {
         tokio::spawn(async {
-            println!("RqTaskScheduler started");
+            log::debug!("RqTaskScheduler started");
             loop {
                 let now = Utc::now();
                 let mut due_tasks: Vec<Arc<dyn RqTask>> = Vec::new();
