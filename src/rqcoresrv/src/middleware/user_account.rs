@@ -260,5 +260,19 @@ pub async fn root_index(http_req: HttpRequest, id: Option<Identity>, session: Se
     }
 
     // 4. Serve the modified HTML
-    HttpResponse::Ok().content_type("text/html; charset=utf-8").body(html)
+    // Login page is rendered differently depending on login state:
+    // logged in  -> index.html and logged out -> index_nouser.html
+    // If the browser caches this response, it will reuse the old HTML without contacting the server again.
+    // That means after login/logout or switching users, the browser may still show the stale page until the user does a hard refresh (Ctrl+F5).
+    // This CANNOT be reliably fixed from JavaScript because JS runs only AFTER the browser has already decided to use the cached page.
+    // `Cache-Control` is the correct server-side way to force the browser to re-request this page every time, so our `is_logged_in` logic always executes and the correct HTML is served.
+    // Directive meanings:
+    //   no-store        -> do not store this response in any cache
+    //   no-cache        -> must revalidate with server before reuse
+    //   must-revalidate -> cannot reuse stale response
+    //   max-age=0       -> response expires immediately
+    HttpResponse::Ok()
+    .insert_header((header::CONTENT_TYPE, "text/html; charset=utf-8"))
+    .insert_header((header::CACHE_CONTROL, "no-store, no-cache, must-revalidate, max-age=0"))
+    .body(html)
 }

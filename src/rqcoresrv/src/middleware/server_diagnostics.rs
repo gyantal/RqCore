@@ -18,17 +18,13 @@ async fn server_diagnostics() -> impl Responder {
     };
     let utc_time = Utc::now();
     let time_delta = utc_time.signed_duration_since(*server_app_start_time);
-    if let Err(err) = write!(sb, "<h2>Main.exe</h2><br>WebAppStartTimeUtc: {} ({} days {:02}:{:02} hours ago)<br>", server_app_start_time.format("%Y-%m-%d %H:%M:%S"), time_delta.num_days(), time_delta.num_hours() % 24, time_delta.num_minutes() % 60,) {
-        log::error!("Failed to write server start time to HTML buffer: {:?}", err);
-    }
+    write!(sb, "<h2>Main.exe</h2><br>WebAppStartTimeUtc: {} ({} days {:02}:{:02} hours ago)<br>", server_app_start_time.format("%Y-%m-%d %H:%M:%S"), time_delta.num_days(), time_delta.num_hours() % 24, time_delta.num_minutes() % 60,).ok();
 
     // RuntimeInfo Section
     let logical_cpus = std::thread::available_parallelism()
         .map(|n| n.get())
         .unwrap_or(1);
-    if let Err(err) = write!(sb, "<h2>RuntimeInfo</h2><br>Logical CPUs: {}<br>Server Workers: {}<br>PID: {}<br>", logical_cpus, logical_cpus, std::process::id()) {
-        log::error!("Failed to write runtime info to HTML buffer: {:?}", err);
-    }
+    write!(sb, "<h2>RuntimeInfo</h2><br>Logical CPUs: {}<br>Server Workers: {}<br>PID: {}<br>", logical_cpus, logical_cpus, std::process::id()).ok();
     // Broker watcher
     write!(sb, "<h2>BrokersWatcher</h2>").ok();
     let gateways_guard = match RQ_BROKERS_WATCHER.gateways.lock() {
@@ -39,21 +35,11 @@ async fn server_diagnostics() -> impl Responder {
         }
     };
     let gateways = &*gateways_guard;
-
-    if let Err(err) = write!(sb, "Total gateways: {}<br>", gateways.len()) {
-        log::error!("Failed to write gateways count: {:?}", err);
-    }
+    write!(sb, "Total gateways: {}<br>", gateways.len()).ok();
 
     for (idx, gw_arc) in gateways.iter().enumerate() {
-        let gw = match gw_arc.lock() {
-            Ok(guard) => guard,
-            Err(err) => {
-                log::error!("Gateway mutex error at index {}: {}", idx, err);
-                continue; // skip this gateway, do not crash request
-            }
-        };
-        if let Err(err) = write!(sb, "Gateway {} → URL: {} | ClientID: {} | Connected: {}<br>", idx, gw.connection_url, gw.client_id, gw.ib_client.is_some()) {
-            log::error!("Failed to write gateway info for index {}: {:?}", idx, err);
+        if let Ok(gw) = gw_arc.lock() {
+            write!(sb, "Gateway {} → URL: {} | ClientID: {} | Connected: {}<br>", idx, gw.connection_url, gw.client_id, gw.ib_client.is_some()).ok();
         }
     }
 
