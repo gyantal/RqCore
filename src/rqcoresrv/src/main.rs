@@ -185,8 +185,8 @@ fn is_taconite_domain(ctx: &actix_web::guard::GuardContext) -> bool {
     host.to_lowercase().contains("thetaconite.com")
 }
 
-// actix's bind_rustls_0_23() returns std::io::Error, so for a while, we use that as return type here as well. 
-fn actix_websrv_run(runtime_info: Arc<RuntimeInfo>, server_workers: usize) -> std::io::Result<(actix_web::dev::Server, ServerHandle)> {
+// actix's bind_rustls_0_23() returns std::io::Error, so we return general std::error::Error here.
+fn actix_websrv_run(runtime_info: Arc<RuntimeInfo>, server_workers: usize) -> Result<(actix_web::dev::Server, ServerHandle), Box<dyn std::error::Error + Send + Sync + 'static>> {
     let cookie_encrypt_secret_key = "A key that is long enough (64 bytes) to encrypt the session cookie content"; // any encryption code that is used to encrypt the 'session' cookie content. Minimum 64 bytes.
     let runtime_info_for_server = runtime_info;
     HTTP_REQUEST_LOGS.set(Arc::new(HttpRequestLogs::new())).expect("REQUEST_LOGS already initialized");
@@ -304,7 +304,7 @@ fn actix_websrv_run(runtime_info: Arc<RuntimeInfo>, server_workers: usize) -> st
             )
     })
     .workers(server_workers)
-    .bind(format!("0.0.0.0:{}", http_listening_port))?  // Don't bind to 127.0.0.1 because it only listens to localhost, not external requests to the IP
+    .bind(format!("0.0.0.0:{}", http_listening_port))?  // Don't bind to 127.0.0.1 because it only listens to localhost, not external requests to the IP. Returns std::io::error
     .bind_rustls_0_23(format!("0.0.0.0:{}", https_listening_port), tls_config)? // https://127.0.0.1:8443
     .run();
 
@@ -500,7 +500,7 @@ struct RuntimeInfo {
 // So, you will not be able to use RQ_BROKERS_WATCHER's ib-clients in those new OS threads. 
 // Although you can create new ib-clients inside the new OS thread with new connectionID. (usually, it is not worth it)
 #[actix_web::main]
-async fn main() -> std::io::Result<()> { // actix's bind_rustls_0_23() returns std::io::Error, so for a while, we use that as return type here as well. 
+async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>> { // actix's bind_rustls_0_23() returns std::io::Error
     init_log().expect("Failed to initialize logging");
     SERVER_APP_START_TIME.set(Utc::now()).ok();
     
