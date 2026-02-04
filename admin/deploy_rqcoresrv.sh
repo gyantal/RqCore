@@ -84,6 +84,6 @@ screen -S "rqcoresrv" -d -m
 echo "*** A new screen 'rqcoresrv' is created. Sleeping for 1 sec before sending command to start webserver..."
 sleep 1
 
-screen -r "rqcoresrv" -X stuff $'cd /home/rquser/RQ/rqcoresrv/prod/src/rqcoresrv\nRUST_LOG="warn,rqcoresrv=info,ibapi=info"\n./target/release/rqcoresrv\n'
+screen -r "rqcoresrv" -X stuff $'cd /home/rquser/RQ/rqcoresrv/prod/src/rqcoresrv\nexport RUST_LOG=warn,rqcoresrv=info,ibapi=info\n./target/release/rqcoresrv\n'
 
 echo "*** Deployment completed at $(date)"

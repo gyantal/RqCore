@@ -12,10 +12,20 @@
       "args": [],
       "cwd": "${workspaceFolder}/src/rqcoresrv",
       "console": "integratedTerminal",
-      "preLaunchTask": "cargo build",
+      "preLaunchTask": "cargo build rqcoresrv",
       "env": {
         "RUST_LOG": "warn,rqcoresrv=info,ibapi=info"  // Set default log levels for debugging
       }
+    },
+    {
+      "name": "open_urls_together (DEBUG)",
+      "type": "lldb",
+      "request": "launch",
+      "program": "${workspaceFolder}/src/tools/agy/open_urls_together/target/debug/open_urls_together.exe",
+      "args": [],
+      "cwd": "${workspaceFolder}/src/tools/agy/open_urls_together",
+      "console": "integratedTerminal",
+      "preLaunchTask": "cargo build open_urls_together"
     }
   ]
 }
