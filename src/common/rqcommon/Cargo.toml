@@ -8,3 +8,5 @@ path = "src/lib.rs"
 
 [dependencies]
 log = "0.4.29"
+chrono = { version = "0.4.43", features = ["serde"] }
+chrono-tz = "0.10.4"

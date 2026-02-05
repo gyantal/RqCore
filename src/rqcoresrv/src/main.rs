@@ -17,28 +17,27 @@ use rqcommon::utils::runningenv::{load_rqcore_config, RqCoreConfig}; // no need 
 mod broker_common {
     pub mod brokers_watcher; // refers ./broker_common/brokers_watcher.rs
 }
-use crate::{broker_common::brokers_watcher::RQ_BROKERS_WATCHER};
-
 mod middleware; // refers ./middleware/mod.rs (that refers to many other *.rs files)
 // no 'use crate::middleware' here, because main_web.rs uses those, and we refer to them there
-
 mod services; // refers ./services/mod.rs
-use crate::services::rqtask_scheduler::{RQ_TASK_SCHEDULER, HeartbeatTask, FastRunnerPqpTask, FastRunnerApTask};
-
 mod webapps; // refers ./webapps/mod.rs
 // no 'use crate::webapps' here, because main_web.rs uses those, and we refer to them there
-
 mod main_web; // refers main_web.rs as a module
-use crate::{main_web::actix_websrv_run};
 
-// Class/struct definitions
+use crate::{
+    broker_common::brokers_watcher::RQ_BROKERS_WATCHER,
+    services::rqtask_scheduler::{RQ_TASK_SCHEDULER, HeartbeatTask, FastRunnerPqpTask, FastRunnerApTask},
+    main_web::actix_websrv_run,
+};
+
+// ---------- Class/struct definitions ----------
 struct RuntimeInfo {
     logical_cpus: usize,
     server_workers: usize,
     pid: u32,
 }
 
-// Global static variables
+// ---------- Global static variables ----------
 pub static SERVER_APP_START_TIME: OnceLock<DateTime<Utc>> = OnceLock::new();
 
 // Maybe this is the best way to handle global static. With a get_rqcore_config() supplier function, rather than accessing the global static variable directly.
@@ -63,6 +62,8 @@ pub fn get_rqcore_config() -> &'static RqCoreConfig {
         }
     })
 }
+
+// ---------- Helpers ----------
 
 fn init_log() -> Result<(), Box<dyn std::error::Error>> {
     // Check if Cargo.toml exists in the current directory, before creating log file in ../../logs/

@@ -1,30 +1,16 @@
-use chrono::{DateTime, Datelike, Duration, NaiveTime, TimeZone, Utc};
-use chrono_tz::{Tz, US::Eastern};
-use std::sync::{Arc, LazyLock, Mutex};
-use tokio::time as tokio_time;
-use std::future::Future;
-use std::pin::Pin;
+use {
+    std::{future::Future, pin::Pin, sync::{Arc, LazyLock, Mutex}},
+    tokio::time as tokio_time,
+    chrono::{DateTime, Datelike, Duration, NaiveTime, TimeZone, Utc},
+    chrono_tz::US::Eastern,
+};
+
+use rqcommon::utils::time::localtimeonly2future_datetime_tz;
 
 use crate::services::fast_runner::FastRunner;
 
-// ---------- Global ----------
+// ---------- Global static variables ----------
 pub static RQ_TASK_SCHEDULER: LazyLock<RqTaskScheduler> = LazyLock::new(|| RqTaskScheduler::new());
-
-// ---------- helpers ----------
-fn localtime2future_utc(tz: Tz, target_time_tz: NaiveTime) -> DateTime<Utc> { // target_time_tz (11:59) is local in the tz timezone. Use today or tommorrow, whichever is in the future. Convert to UTC at the end.
-    let now_tz = Utc::now().with_timezone(&tz);
-    let today_target_tz = now_tz.date_naive().and_time(target_time_tz);
-    let next_target_tz = if now_tz.time() < target_time_tz { // if target_time_tz is later today in the future, use that. Otherwise, use tomorrow
-        today_target_tz
-    } else {
-        (now_tz + Duration::days(1)).date_naive().and_time(target_time_tz)
-    };
-    // Handle DST (ambiguous/invalid) by picking earliest valid local time
-    tz.from_local_datetime(&next_target_tz)
-        .earliest()
-        .unwrap()
-        .to_utc()
-}
 
 // ---------- Task trait ----------
 pub trait RqTask: Send + Sync {
@@ -96,7 +82,7 @@ impl FastRunnerPqpTask {
 
         targets_tz
             .into_iter()
-            .map(|t| localtime2future_utc(tz, t))
+            .map(|time| localtimeonly2future_datetime_tz(tz, time).to_utc())
             .min() // pick the earliest UTC time
             .unwrap()
     }
@@ -122,41 +108,44 @@ impl RqTask for FastRunnerPqpTask {
             let utc_now = Utc::now().date_naive();
             let is_run_today = utc_now.weekday() == chrono::Weekday::Mon;
             // let is_run_today = true; // run every day for testing. Also use this if PQP day is not Monday and it is run manually.
-            if is_run_today {
-                println!("FastRunnerPqpTask run() starts the loop");
-                let tz_et = Eastern;
-                let now_et = Utc::now().with_timezone(&tz_et);
-                let target_naive = now_et.date_naive().and_time(NaiveTime::from_hms_opt(12, 0, 0).unwrap());
-                let target_et = tz_et.from_local_datetime(&target_naive).earliest().unwrap();
-                let is_live_trading = (now_et - target_et).num_seconds().abs() < 55; // If current time from 12:00 ET is less than 55 seconds, then set it to true.
+            if !is_run_today {
+                println!("Today is not the scheduled day for FastRunnerPqpTask");
+                return;
+            }
 
-                let mut fast_runner = FastRunner::new();
-                fast_runner.is_simulation = !is_live_trading;
+            println!("FastRunnerPqpTask run() starts the loop");
+            let tz_et = Eastern;
+            let now_et = Utc::now().with_timezone(&tz_et);
+            let target_naive = now_et.date_naive().and_time(NaiveTime::from_hms_opt(12, 0, 0).unwrap());
+            let target_et = tz_et.from_local_datetime(&target_naive).earliest().unwrap();
+            let is_live_trading = (now_et - target_et).num_seconds().abs() < 55; // If current time from 12:00 ET is less than 55 seconds, then set it to true.
 
-                let loop_endtime = tokio::time::Instant::now()
-                    + if is_live_trading { tokio::time::Duration::from_secs(4 * 60 + 30) } 
-                        else { tokio::time::Duration::from_secs(30) };
+            let mut fast_runner = FastRunner::new();
+            fast_runner.is_simulation = !is_live_trading;
 
-                // >Example running time at trading:
-                // 17:00:02.952 FastRunnerPqpTask run(): Loop iteration (IsSimu:false)
-                // Elapsed Time of reqwest.Client.get(): 2,054ms. // SA refreshed the page (high demand), or it couldn't come from RAM cache, so 600ms => 2000ms.
-                // 17:00:06.433 FastRunnerPqpTask run() ended
-                // it was 2 trades sent. It took 3.5 seconds (including downloading the page (2sec), getting the 2 prices, sending the order)
-                // as 2sec was the download URL time, RqCore handles it in 1.5sec with 2 price query and 2 order. So, about 500ms per stock.
-                while tokio::time::Instant::now() < loop_endtime { // if the loop runs more than 4 minutes 30 seconds, then finish the loop
-                    println!(">*{} FastRunnerPqpTask run(): Loop iteration (IsSimu:{})", Utc::now().format("%H:%M:%S%.3f"), fast_runner.is_simulation);
+            let loop_endtime = tokio::time::Instant::now()
+                + if is_live_trading { tokio::time::Duration::from_secs(4 * 60 + 30) } 
+                    else { tokio::time::Duration::from_secs(30) };
 
-                    fast_runner.fastrunning_loop_pqp_impl().await;
+            // >Example running time at trading:
+            // 17:00:02.952 FastRunnerPqpTask run(): Loop iteration (IsSimu:false)
+            // Elapsed Time of reqwest.Client.get(): 2,054ms. // SA refreshed the page (high demand), or it couldn't come from RAM cache, so 600ms => 2000ms.
+            // 17:00:06.433 FastRunnerPqpTask run() ended
+            // it was 2 trades sent. It took 3.5 seconds (including downloading the page (2sec), getting the 2 prices, sending the order)
+            // as 2sec was the download URL time, RqCore handles it in 1.5sec with 2 price query and 2 order. So, about 500ms per stock.
+            while tokio::time::Instant::now() < loop_endtime { // if the loop runs more than 4 minutes 30 seconds, then finish the loop
+                println!(">*{} FastRunnerPqpTask run(): Loop iteration (IsSimu:{})", Utc::now().format("%H:%M:%S%.3f"), fast_runner.is_simulation);
 
-                    if fast_runner.has_trading_ever_started {
-                        println!("FastRunnerPqpTask: Trading has started, exiting the loop.");
-                        break;
-                    }
+                fast_runner.fastrunning_loop_pqp_impl().await;
 
-                    let sleep_ms = if fast_runner.is_simulation { fast_runner.loop_sleep_ms_simulation } else { fast_runner.loop_sleep_ms_realtrading };
-                    if sleep_ms > 0 {
-                        tokio::time::sleep(tokio::time::Duration::from_millis(sleep_ms.into())).await;
-                    }
+                if fast_runner.has_trading_ever_started {
+                    println!("FastRunnerPqpTask: Trading has started, exiting the loop.");
+                    break;
+                }
+
+                let sleep_ms = if fast_runner.is_simulation { fast_runner.loop_sleep_ms_simulation } else { fast_runner.loop_sleep_ms_realtrading };
+                if sleep_ms > 0 {
+                    tokio::time::sleep(tokio::time::Duration::from_millis(sleep_ms.into())).await;
                 }
             }
             println!("{} FastRunnerPqpTask run() ended", Utc::now().format("%H:%M:%S%.3f"));
@@ -191,7 +180,7 @@ impl FastRunnerApTask {
 
         targets_tz
             .into_iter()
-            .map(|t| localtime2future_utc(tz, t))
+            .map(|t| localtimeonly2future_datetime_tz(tz, t).to_utc())
             .min() // pick the earliest UTC time
             .unwrap()
     }
@@ -226,39 +215,41 @@ impl RqTask for FastRunnerApTask {
                 chrono::Weekday::Sun => virtual_rebalance_date + chrono::Duration::days(1),
                 _ => virtual_rebalance_date,
             };
-
             // Check if today is the real_rebalance_date
             let is_run_today = now_utc == real_rebalance_date;
             // let is_run_today = true; // run every day for testing
-            if is_run_today {
-                println!("FastRunnerApTask run() starts the loop");
-                let tz_et = Eastern;
-                let now_et = Utc::now().with_timezone(&tz_et);
-                let target_naive = now_et.date_naive().and_time(NaiveTime::from_hms_opt(12, 0, 0).unwrap());
-                let target_et = tz_et.from_local_datetime(&target_naive).earliest().unwrap();
-                let is_live_trading = (now_et - target_et).num_seconds().abs() < 55; // If current time from 12:00 ET is less than 55 seconds, then set it to true.
+            if !is_run_today {
+                println!("Today is not the scheduled day for FastRunnerApTask");
+                return;
+            }
 
-                let mut fast_runner = FastRunner::new();
-                fast_runner.is_simulation = !is_live_trading;
+            println!("FastRunnerApTask run() starts the loop");
+            let tz_et = Eastern;
+            let now_et = Utc::now().with_timezone(&tz_et);
+            let target_naive = now_et.date_naive().and_time(NaiveTime::from_hms_opt(12, 0, 0).unwrap());
+            let target_et = tz_et.from_local_datetime(&target_naive).earliest().unwrap();
+            let is_live_trading = (now_et - target_et).num_seconds().abs() < 55; // If current time from 12:00 ET is less than 55 seconds, then set it to true.
 
-                let loop_endtime = tokio::time::Instant::now()
-                    + if is_live_trading { tokio::time::Duration::from_secs(4 * 60 + 30) } // 2025-12-01: AP/Analysis tab published at 12:01:15 ET (late), the AP history was published 30 seconds earlier
-                        else { tokio::time::Duration::from_secs(30) };
+            let mut fast_runner = FastRunner::new();
+            fast_runner.is_simulation = !is_live_trading;
 
-                while tokio::time::Instant::now() < loop_endtime { // if the loop runs more than 4 minutes 30 seconds, then finish the loop
-                    println!(">*{} FastRunnerApTask run(): Loop iteration (IsSimu:{})", Utc::now().format("%H:%M:%S%.3f"), fast_runner.is_simulation);
+            let loop_endtime = tokio::time::Instant::now()
+                + if is_live_trading { tokio::time::Duration::from_secs(4 * 60 + 30) } // 2025-12-01: AP/Analysis tab published at 12:01:15 ET (late), the AP history was published 30 seconds earlier
+                    else { tokio::time::Duration::from_secs(30) };
 
-                    fast_runner.fastrunning_loop_ap_impl().await;
+            while tokio::time::Instant::now() < loop_endtime { // if the loop runs more than 4 minutes 30 seconds, then finish the loop
+                println!(">*{} FastRunnerApTask run(): Loop iteration (IsSimu:{})", Utc::now().format("%H:%M:%S%.3f"), fast_runner.is_simulation);
 
-                    if fast_runner.has_trading_ever_started {
-                        println!("FastRunnerApTask: Trading has started, exiting the loop.");
-                        break;
-                    }
+                fast_runner.fastrunning_loop_ap_impl().await;
 
-                    let sleep_ms = if fast_runner.is_simulation { fast_runner.loop_sleep_ms_simulation } else { fast_runner.loop_sleep_ms_realtrading };
-                    if sleep_ms > 0 {
-                        tokio::time::sleep(tokio::time::Duration::from_millis(sleep_ms.into())).await;
-                    }
+                if fast_runner.has_trading_ever_started {
+                    println!("FastRunnerApTask: Trading has started, exiting the loop.");
+                    break;
+                }
+
+                let sleep_ms = if fast_runner.is_simulation { fast_runner.loop_sleep_ms_simulation } else { fast_runner.loop_sleep_ms_realtrading };
+                if sleep_ms > 0 {
+                    tokio::time::sleep(tokio::time::Duration::from_millis(sleep_ms.into())).await;
                 }
             }
             println!("{} FastRunnerApTask run() ended", Utc::now().format("%H:%M:%S%.3f"));

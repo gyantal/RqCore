@@ -1,35 +1,9 @@
-use std::path::{Path, PathBuf} ;
-use std::collections::HashMap;
-use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
-use chrono::{Local, Utc};
-use chrono::Datelike;
-use serde::Deserialize;
+use chrono::{Datelike, Local, Utc};
 use ibapi::{prelude::*};
-use std::fs;
-use std::time::SystemTime;
-use std::future::Future;
-
+use serde::Deserialize;
+use std::{collections::HashMap, fs, path::{Path, PathBuf}, sync::{atomic::{AtomicBool, Ordering}, Arc}, time::{Instant, SystemTime}};
+use rqcommon::utils::time::{benchmark_elapsed_time, benchmark_elapsed_time_async};
 use crate::RQ_BROKERS_WATCHER;
-
-use std::time::Instant;
-
-pub fn benchmark_elapsed_time(name: &str, f: impl FnOnce()) {
-    let start = Instant::now();
-    f();
-    let elapsed_microsec = start.elapsed().as_secs_f64() * 1_000_000.0;
-    println!("Elapsed Time of {}: {:.2}us", name, elapsed_microsec); // TODO: no native support thousand separators in float or int. Use crate 'num-format' or 'thousands' or better: write a lightweight formatter train in RqCommon
-}
-
-pub async fn benchmark_elapsed_time_async<F, Fut>(name: &str, f: F)
-where
-    F: FnOnce() -> Fut,
-    Fut: Future<Output = ()>,
-{
-    let start = Instant::now();
-    f().await;
-    let elapsed_microsec = start.elapsed().as_secs_f64() * 1_000_000.0;
-    println!("Elapsed Time of {}: {:.2}us", name, elapsed_microsec);
-}
 
 #[derive(Debug, Deserialize)]
 pub struct PqpResponse {
@@ -88,8 +62,6 @@ pub struct TickerData {
     #[serde(rename = "type")]
     pub type_: String,
 }
-
-
 
 #[derive(Debug, Deserialize, Clone)]
 #[allow(dead_code)]
@@ -181,7 +153,6 @@ pub struct TransactionEvent {
         pub name: Option<String>,
         pub company: Option<String>,
     }
-
 
 
 pub struct FastRunner {

@@ -7,9 +7,11 @@ use actix_identity::IdentityMiddleware;
 use actix_session::{storage::CookieSessionStore, config::PersistentSession, SessionMiddleware};
 
 use rqcommon::utils::runningenv::{sensitive_config_folder_path};
-use crate::RuntimeInfo;
-use crate::middleware::{ user_account, server_diagnostics::{self}, http_request_logger::{self, HTTP_REQUEST_LOGS, HttpRequestLogs, http_request_logger_middleware}};
-use crate::webapps::test_websocket::test_ws::test_websocket_middleware;
+use crate::{
+    RuntimeInfo,
+    middleware::{ user_account, server_diagnostics::{self}, http_request_logger::{self, HTTP_REQUEST_LOGS, HttpRequestLogs, http_request_logger_middleware}},
+    webapps::test_websocket::test_ws::test_websocket_middleware,
+};
 
 // SNI (Server Name Indication): the hostname sent by the client. Used for selecting HTTPS cert.
 struct SniWithDefaultFallbackResolver {
