@@ -1,7 +1,7 @@
 use chrono::{Datelike, Local, Utc};
 use ibapi::{prelude::*};
 use serde::Deserialize;
-use std::{collections::HashMap, fs, path::{Path, PathBuf}, sync::{atomic::{AtomicBool, Ordering}, Arc}, time::{Instant, SystemTime}};
+use std::{collections::HashMap, fs, path::{Path, PathBuf}, sync::{Arc}, time::{Instant, SystemTime}};
 use rqcommon::utils::time::{benchmark_elapsed_time, benchmark_elapsed_time_async};
 use crate::RQ_BROKERS_WATCHER;
 
@@ -159,11 +159,20 @@ pub struct FastRunner {
     pub is_simulation: bool, // is true for simulation, false for real trading
     pub loop_sleep_ms_simulation: u32,
     pub loop_sleep_ms_realtrading: u32,
-    pub is_loop_active: Arc<AtomicBool>,
     pub has_trading_ever_started: bool,
     pub cookies: Option<String>,
     pub cookies_file_last_modtime: Option<SystemTime>,
     pub m_is_cookies_surely_working: bool,
+
+    pub pqp_json_target_date_str: String,
+    pub pqp_is_run_today: bool,
+
+    pub ap_json_target_date_str:String,
+    pub ap_is_run_today: bool,
+
+    pub pqp_buy_pv: f64, // PQP PV for buys
+    pub pqp_sell_pv: f64, // PQP PV for sells
+    pub ap_buy_pv: f64, // AP PV for buys
 }
 
 impl FastRunner {
@@ -176,13 +185,26 @@ impl FastRunner {
 
             loop_sleep_ms_simulation: 3750, // usually 3750, that is 3.75s
             loop_sleep_ms_realtrading: 0, // usually 250ms (note that reqwest.client.get() is 500-700ms, so we don't have to sleep much here)
-            is_loop_active: Arc::new(AtomicBool::new(false)),
             has_trading_ever_started: false,
             // initialize cookies cache
             cookies: None,
             cookies_file_last_modtime: None,
             m_is_cookies_surely_working: false,
+
+            pqp_json_target_date_str: String::new(),
+            pqp_is_run_today: false,
+
+            ap_json_target_date_str: String::new(),
+            ap_is_run_today: false,
+
+            pqp_buy_pv: 50000.0, // PQP PV for buys
+            pqp_sell_pv: 30000.0, // PQP PV for sells
+            ap_buy_pv: 50000.0, // AP PV for buys
         }
+    }
+
+    pub fn init(&mut self) {
+        self.pqp_ap_calculate_dates_and_pv();
     }
 
     const COOKIES_FILE_PATH: &'static str = "../../../rqcore_data/fast_run_1_headers.txt";
@@ -205,18 +227,62 @@ impl FastRunner {
         }
     }
 
+    pub fn pqp_ap_calculate_dates_and_pv(&mut self) {
+        let now_utc = Utc::now().date_naive();
+
+        let pqp_days_to_subtract = now_utc.weekday().days_since(chrono::Weekday::Mon) as i64; // equivalent to num_days_from_monday(). From Last Monday. If today is Monday, then it is 0.
+        // let days_to_subtract = now_utc.weekday().days_since(chrono::Weekday::Tue) as i64; // If there is USA bank holiday on Monday, then use this
+        let pqp_virtual_rebalance_date = now_utc - chrono::Duration::days(pqp_days_to_subtract); // always current or last Monday
+        let pqp_real_rebalance_date = pqp_virtual_rebalance_date; // can be Tuesday; TODO: implement holiday checking.
+        self.pqp_json_target_date_str = pqp_real_rebalance_date.format("%Y-%m-%d").to_string(); // Seek this in received JSON
+        // let pqp_json_target_date_str = "2025-11-03".to_string(); // override for testing
+        // Check if today is the real_rebalance_date
+        self.pqp_is_run_today = now_utc == pqp_real_rebalance_date;
+        // self.pqp_is_run_today = true; // override for testing
+        println!("pqp_virtual_rebalance_date: {}, pqp_real_rebalance_date: {}, pqp_is_run_today: {}, ", pqp_virtual_rebalance_date, pqp_real_rebalance_date, self.pqp_is_run_today);
+
+        let ap_virtual_rebalance_date = if now_utc.day() >= 15 { // virtual_rebalance_date as the 1st or 15th of month
+            now_utc.with_day(15).unwrap()
+        } else {
+            now_utc.with_day(1).unwrap()
+        };
+        let ap_real_rebalance_date = match ap_virtual_rebalance_date.weekday() { // real_rebalance_date as virtual_rebalance_date or the first weekday after it if it falls on a weekend
+            chrono::Weekday::Sat => ap_virtual_rebalance_date + chrono::Duration::days(2),
+            chrono::Weekday::Sun => ap_virtual_rebalance_date + chrono::Duration::days(1),
+            _ => ap_virtual_rebalance_date, // TODO: implement holiday checking.
+        };
+        self.ap_json_target_date_str = ap_real_rebalance_date.format("%Y-%m-%d").to_string(); // Seek this in received JSON
+        // Check if today is the real_rebalance_date
+        self.ap_is_run_today = now_utc == ap_real_rebalance_date;
+        // self.ap_is_run_today = true; // override for testing
+        println!("ap_virtual_rebalance_date: {}, ap_real_rebalance_date: {}, ap_is_run_today: {}, ", ap_virtual_rebalance_date, ap_real_rebalance_date, self.ap_is_run_today);
+
+        // Determine PV Portfolio Values to play. If both PQP and AP run today, then we can split the PV between them. If only one of them runs, then we can allocate all PV to that one.
+        if self.pqp_is_run_today && self.ap_is_run_today { // future target: 70K+70K+60K short =200K.
+            self.pqp_buy_pv = 60000.0;
+            self.pqp_sell_pv = 40000.0;
+            self.ap_buy_pv = 60000.0;
+        } else if self.pqp_is_run_today {
+            self.pqp_buy_pv = 120000.0;
+            self.pqp_sell_pv = 40000.0;
+            self.ap_buy_pv = 0.0;
+        } else if self.ap_is_run_today {
+            self.pqp_buy_pv = 0.0;
+            self.pqp_sell_pv = 0.0;
+            self.ap_buy_pv = 120000.0;
+        } else {
+            self.pqp_buy_pv = 0.0;
+            self.pqp_sell_pv = 0.0;
+            self.ap_buy_pv = 0.0;
+        }
+
+        // print everything for debugging
+        println!("pqp_buy_pv: {}, pqp_sell_pv: {}, ap_buy_pv: {}", self.pqp_buy_pv, self.pqp_sell_pv, self.ap_buy_pv);
+
+    }
+
     pub async fn get_new_buys_sells_pqp(&mut self) -> (String, Vec<TransactionEvent>, Vec<TransactionEvent>) {
         println!(">* get_new_buys_sells_pqp() started.");
-
-        // Calculate target_action_date from the current date (last Monday).
-        // TODO: This can be a problem if Monday is a stock market holiday. We will miss that date. But OK for now.
-        let now_utc = Utc::now().date_naive();
-        let days_to_subtract = now_utc.weekday().days_since(chrono::Weekday::Mon) as i64; // equivalent to num_days_from_monday()
-        // let days_to_subtract = now_utc.weekday().days_since(chrono::Weekday::Tue) as i64; // If there is USA bank holiday on Monday, then use this
-        let real_rebalance_date = now_utc - chrono::Duration::days(days_to_subtract);
-        let target_action_date = real_rebalance_date.format("%Y-%m-%d").to_string();
-        // let target_action_date = "2025-11-03".to_string(); // Monday date
-        println!("target_action_date: {}", target_action_date);
 
         benchmark_elapsed_time("ensure_cookies_loaded()", || {  // 300us first, 70us later
             self.ensure_cookies_loaded(); // cookies are reloaded from file only if needed, if the file changed.
@@ -250,13 +316,15 @@ impl FastRunner {
         tokio::fs::write(&file_path, &body_text).await.expect("fs::write() failed!");
         println!("Saved raw JSON to {}", file_path.display());
 
+        println!("pqp_json_target_date: {}", self.pqp_json_target_date_str);
+
         if body_text.len() < 1000 {
             if body_text.contains("Subscription is required") {
                 println!("!Error. No permission, Update cookie file."); // we don't have to terminate the infinite Loop. The admin can update the cookie file and the next iteration will notice it.
-                return (target_action_date.to_string(), Vec::new(), Vec::new());
+                return (self.pqp_json_target_date_str.clone(), Vec::new(), Vec::new());
             } else if body_text.contains("captcha.js") {
                 println!("!Error. Captcha required, Update cookie file AND handle Captcha in browser."); // we don't have to terminate the infinite Loop. The admin can update the cookie file and the next iteration will notice it.
-                return (target_action_date.to_string(), Vec::new(), Vec::new());
+                return (self.pqp_json_target_date_str.clone(), Vec::new(), Vec::new());
             }
         }
         
@@ -308,7 +376,7 @@ impl FastRunner {
         let mut new_sell_events: Vec<TransactionEvent> = Vec::new();
         for transaction in &transactions {
             // Skip if not our target date
-            if transaction.attributes.action_date != target_action_date {
+            if transaction.attributes.action_date != self.pqp_json_target_date_str {
                 continue;
             }
             // Skip rebalance transactions
@@ -347,7 +415,7 @@ impl FastRunner {
             }
         }
 
-        (target_action_date.to_string(), new_buy_events, new_sell_events)
+        (self.pqp_json_target_date_str.clone(), new_buy_events, new_sell_events)
     }
 
 
@@ -370,11 +438,8 @@ impl FastRunner {
     }
 
     fn determine_position_market_values_pqp_gyantal(&self, new_buy_events: &mut Vec<TransactionEvent>, new_sell_events: &mut Vec<TransactionEvent>) {
-        let buy_pv = 50000.0; // PV for buys
-        let sell_pv = 30000.0; // PV for sells
-
-        let buy_pos_mkt_value = buy_pv / (new_buy_events.len() as f64);
-        let sell_pos_mkt_value = sell_pv / (new_sell_events.len() as f64);
+        let buy_pos_mkt_value = self.pqp_buy_pv / (new_buy_events.len() as f64);
+        let sell_pos_mkt_value = self.pqp_sell_pv / (new_sell_events.len() as f64);
         for event in new_buy_events.iter_mut() {
             event.pos_market_value = buy_pos_mkt_value;
         }
@@ -438,7 +503,7 @@ impl FastRunner {
             println!("  {} ({}, ${}, ${}, event)", event.ticker, event.company_name, event.price.as_deref().unwrap_or("N/A"), event.pos_market_value);
             let contract = Contract::stock(&event.ticker).build();
             // print the contract details
-            print!("  Contract details: {:?}", contract); // TODO: inspect these to see if we can catch early if GMTLF is not supported by IB. "No security definition has been found for the request". In that case, don't try to get price that takes 500ms.
+            println!("  Contract details: {:?}", contract); // TODO: inspect these to see if we can catch early if GMTLF is not supported by IB. "No security definition has been found for the request". In that case, don't try to get price that takes 500ms.
             let price = get_price(&ib_client_dcmain, event, &contract).await;
             if price.is_nan() { // If no price (e.g. no real-time market data for ADR, OTC), we cannot calculate nShares, not even MKT orders possible, we skip only this trade, but don't panic and do other trades
                 println!("  {} ({}, cannot determine price, skipping...)", event.ticker, event.company_name);
@@ -493,57 +558,9 @@ impl FastRunner {
         // io::stdout().flush().unwrap();  // Ensure immediate output, because it is annoying to wait for newline or buffer full
     }
 
-    pub async fn start_fastrunning_loop_pqp(&mut self) {
-        println!("start_fastrunning_loop() started.");
-        self.is_loop_active.store(true, Ordering::SeqCst);
-        let is_loop_active_clone = self.is_loop_active.clone(); // Clone the Arc, not the AtomicBool
-
-        tokio::spawn(async move { // to force the async block to take ownership of `is_loop_active_clone` (and any other referenced variables), use the `move` keyword
-            println!("FastRunner task started");
-            let mut fast_runner2 = FastRunner::new(); // fake another instance, because self cannot be used, because it will be out of scope after this function returns
-
-            while is_loop_active_clone.load(Ordering::SeqCst) {
-                println!(">* Loop iteration");
-
-                fast_runner2.fastrunning_loop_pqp_impl().await;
-
-                if fast_runner2.has_trading_ever_started {
-                    println!("Trading has started, exiting the loop.");
-                    break;
-                }
-
-                let sleep_ms = if fast_runner2.is_simulation { fast_runner2.loop_sleep_ms_simulation } else { fast_runner2.loop_sleep_ms_realtrading };
-                if sleep_ms > 0 {
-                    tokio::time::sleep(tokio::time::Duration::from_millis(sleep_ms.into())).await;
-                }
-            }
-            println!("FastRunner thread stopping");
-        });
-    }
-
-    pub async fn stop_fastrunning_loop_pqp(&mut self) {
-        println!("stop_fastrunning_loop() started.");
-        self.is_loop_active.store(false, Ordering::SeqCst);
-    }
 
     pub async fn get_new_buys_sells_ap(&mut self) -> (String, Vec<TransactionEvent>) {
         println!(">* get_new_buys_sells_ap() started.");
-
-        let now_utc = Utc::now().date_naive();
-        let virtual_rebalance_date = if now_utc.day() >= 15 { // virtual_rebalance_date as the last 1st or 15th of month before or equal to today
-            now_utc.with_day(15).unwrap()
-        } else {
-            now_utc.with_day(1).unwrap()
-        };
-        let real_rebalance_date = match virtual_rebalance_date.weekday() { // real_rebalance_date as virtual_rebalance_date or the first weekday after it if it falls on a weekend
-            chrono::Weekday::Sat => virtual_rebalance_date + chrono::Duration::days(2),
-            chrono::Weekday::Sun => virtual_rebalance_date + chrono::Duration::days(1),
-            _ => virtual_rebalance_date,
-        };
-        // TODO: This can be a problem if Monday is a stock market holiday. We will miss that date. But OK for now.
-        let target_action_date = real_rebalance_date.format("%Y-%m-%d").to_string();
-        // let target_action_date = "2025-11-03".to_string(); // AP: 1st or 15th day of the month, or the closest trading day after it.
-        println!("target_action_date: {}", target_action_date);
 
         benchmark_elapsed_time("ensure_cookies_loaded()", || {  // 300us first, 70us later
             self.ensure_cookies_loaded(); // cookies are reloaded from file only if needed, if the file changed.
@@ -577,12 +594,14 @@ impl FastRunner {
         tokio::fs::write(&file_path, &body_text).await.expect("fs::write() failed!");
         println!("Saved raw JSON to {}", file_path.display());
 
+        println!("ap_json_target_date: {}", self.ap_json_target_date_str);
+
         if !body_text.contains("\"isPaywalled\":false") { // Search ""isPaywalled":false". If it can be found, then it is good. Otherwise, we get the articles, but the primaryTickers will be empty.
             println!("!Error. No permission, Update cookie file."); // we don't have to terminate the infinite Loop. The admin can update the cookie file and the next iteration will notice it.
-            return (target_action_date.to_string(), Vec::new());
+            return (self.ap_json_target_date_str.clone(), Vec::new());
         } else if body_text.contains("captcha.js") {
             println!("!Error. Captcha required, Update cookie file AND handle Captcha in browser."); // we don't have to terminate the infinite Loop. The admin can update the cookie file and the next iteration will notice it.
-            return (target_action_date.to_string(), Vec::new());
+            return (self.ap_json_target_date_str.clone(), Vec::new());
         }
 
         // Parse saved text as JSON
@@ -630,7 +649,7 @@ impl FastRunner {
         for article in &ap_response.data {
             let publish_on = &article.attributes.publish_on; // 2025-10-15T12:00:23-04:00
             let publish_on_dateonly = &publish_on[0..10]; // extract "2025-10-15"
-            if publish_on_dateonly != target_action_date { // Skip if not our target date
+            if publish_on_dateonly != self.ap_json_target_date_str { // Skip if not our target date
                 continue;
             }
             // For AP, we consider all primary tickers as "buy" events
@@ -658,7 +677,7 @@ impl FastRunner {
             }
         }
 
-        (target_action_date.to_string(), new_buy_events)
+        (self.ap_json_target_date_str.clone(), new_buy_events)
     }
 
     pub async fn test_http_download_ap(&mut self) {
@@ -675,9 +694,7 @@ impl FastRunner {
     }
 
     fn determine_position_market_values_ap_gyantal(&self, new_buy_events: &mut Vec<TransactionEvent>) {
-        let buy_pv = 50000.0; // PV for buys
-
-        let buy_pos_mkt_value = buy_pv / (new_buy_events.len() as f64);
+        let buy_pos_mkt_value = self.ap_buy_pv / (new_buy_events.len() as f64);
         for event in new_buy_events.iter_mut() {
             event.pos_market_value = buy_pos_mkt_value;
         }

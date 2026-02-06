@@ -26,7 +26,7 @@ mod main_web; // refers main_web.rs as a module
 
 use crate::{
     broker_common::brokers_watcher::RQ_BROKERS_WATCHER,
-    services::rqtask_scheduler::{RQ_TASK_SCHEDULER, HeartbeatTask, FastRunnerPqpTask, FastRunnerApTask},
+    services::rqtask_scheduler::{RQ_TASK_SCHEDULER, HeartbeatTask, FastRunnerPqpTask, FastRunnerApTask, RqTask},
     main_web::actix_websrv_run,
 };
 
@@ -124,8 +124,6 @@ fn init_log() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 async fn console_menu_loop(server_handle: ServerHandle, runtime_info: Arc<RuntimeInfo>) {
-    let mut fast_runner = services::fast_runner::FastRunner::new();
-
     let stdin = io::stdin();
     let mut lines = io::BufReader::new(stdin).lines();
 
@@ -141,10 +139,10 @@ async fn console_menu_loop(server_handle: ServerHandle, runtime_info: Arc<Runtim
         println!("41) Test: tokio::spawn() background async task in main runtime");
         println!("42) Test IbAPI (gyantal): historical data");
         println!("43) Test IbAPI (dcmain): realtime bars");
-        println!("51) FastRunner PQP: Test HttpDownload");
-        println!("52) FastRunner PQP: Loop Start");
-        println!("53) FastRunner PQP: Loop Stop");
-        println!("54) FastRunner AP: Test HttpDownload");
+        println!("51) FastRunner PQP: test only HttpDownload");
+        println!("52) FastRunner AP: test only HttpDownload");
+        println!("53) FastRunnerTask PQP: Forcerun trade simulation");
+        println!("54) FastRunnerTask AP: Forcerun trade simulation (getprice() hangs OTH)");
         println!("9) Stop server and exit gracefully (Avoid Ctrl-^C).");
         print!("Choice: ");
         // flush stdout (small blocking is fine here)
@@ -185,16 +183,24 @@ async fn console_menu_loop(server_handle: ServerHandle, runtime_info: Arc<Runtim
                 test_ibapi_realtime_bars().await;
             }
             "51" => {
+                let mut fast_runner = services::fast_runner::FastRunner::new();
+                fast_runner.init();
                 fast_runner.test_http_download_pqp().await;
             }
             "52" => {
-                fast_runner.start_fastrunning_loop_pqp().await;
+                let mut fast_runner = services::fast_runner::FastRunner::new();
+                fast_runner.init();
+                fast_runner.test_http_download_ap().await;
             }
             "53" => {
-                fast_runner.stop_fastrunning_loop_pqp().await;
+                let mut task = FastRunnerPqpTask::new();
+                task.is_manual_user_forcerun = true;
+                task.run().await;
             },
             "54" => {
-                fast_runner.test_http_download_ap().await;
+                let mut task = FastRunnerApTask::new();
+                task.is_manual_user_forcerun = true;
+                task.run().await;
             }
             "9" => {
                 println!("Stopping server...");
