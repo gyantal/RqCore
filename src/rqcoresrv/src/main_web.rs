@@ -1,6 +1,6 @@
 use std::{fs::File, io::BufReader, fmt, sync::Arc};
 use actix_files::Files;
-use actix_web::{cookie::Key, web, App, Error, HttpServer, body::MessageBody, middleware::{from_fn, Compress, Logger, Next}, dev::{ServerHandle, ServiceResponse}, http::header::CACHE_CONTROL};
+use actix_web::{cookie::Key, web, App, Error, HttpServer, body::MessageBody, middleware::{from_fn, Compress, Logger, Next}, dev::{ServerHandle, ServiceResponse}, http::header::{CACHE_CONTROL, HeaderValue}};
 use rustls::{ServerConfig, crypto::aws_lc_rs::sign::any_supported_type, pki_types::{CertificateDer, PrivateKeyDer}, server::{ClientHello, ResolvesServerCert, ResolvesServerCertUsingSni}, sign::CertifiedKey};
 use rustls_pemfile;
 use actix_identity::IdentityMiddleware;
@@ -56,11 +56,18 @@ async fn browser_cache_control_30_days_middleware<B>(
 where
     B: MessageBody + 'static,
 {
+    let path = req.path().to_string();
     let mut res = next.call(req).await?;
-    res.headers_mut().insert(
-        CACHE_CONTROL,
-        "public, max-age=2592000".parse().unwrap(),
-    );
+
+    let dynamic_cache = HeaderValue::from_static("no-store, no-cache, must-revalidate, max-age=0"); // For HTML / user-dependent responses (login state, session data, templated values) → never cache.
+    let static_cache = HeaderValue::from_static("public, max-age=2592000"); // For static assets (js, css, images, fonts, etc.) → cache for 30 days.
+
+    if path == "/" || matches!(path.as_str(), "/useraccount/login" | "/useraccount/logout")
+    {
+        res.headers_mut().insert(CACHE_CONTROL, dynamic_cache);
+    } else {
+        res.headers_mut().insert(CACHE_CONTROL, static_cache);
+    }
     Ok(res)
 }
 
