@@ -1,13 +1,19 @@
 [toolchain]
 # For local development. To support *.rs files "Format Selection" context menu, need to use Nightly toolchain (rustc, cargo, rustfmt). 
 # https://github.com/rust-lang/rust-analyzer/discussions/17899
-# rustup show                # shows the active toolchain + overrides
+# rustup show                # shows the active toolchain + rust-toolchain.toml overrides
 # rustup toolchain list      # what you have installed
 # rustup toolchain install stable
 # rustup toolchain install nightly
+# these usually installs: stable-x86_64-pc-windows-msvc (that contains PDB debug info)
+# you can also install "rustup toolchain install stable-x86_64-pc-windows-gnu" (that compiles DWARF debug info)
+# uninstall
+# rustup default stable-x86_64-pc-windows-gnu  // set a toolchain as default
+# rustup toolchain remove stable-x86_64-pc-windows-msvc
 # Also, has to set up vscode settings:
 # "rust-analyzer.rustfmt.rangeFormatting.enable": true,
 #    "rust-analyzer.rustfmt.extraArgs": [
 #        "+nightly"
 #    ]
-channel = "nightly"  # "stable" or "nightly"
+# The Rust release channels (can be: stable, beta, nightly, or a specific version like "1.82.0").
+channel = "nightly"  # "stable" or "nightly" # keep it nightly, so we have "Format Selection" and variable type deduction in VsCode

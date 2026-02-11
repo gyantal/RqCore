@@ -2,30 +2,74 @@
   // Use IntelliSense to learn about possible attributes.
   // Hover to view descriptions of existing attributes.
   // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+
+  // There are 2 Rust toolchains (rusc, cargo, clippy etc) on Windows.
+  // stable-x86_64-pc-windows-msvc : allow access to Windows specific features, libraries, but we don't need that. Uses the PDB debug info format.
+  // stable-x86_64-pc-windows-gnu : open-source tools like GCC/MinGW. No Microsoft dependency. Like the Rust Linux environment. Uses the DWARF debug info format.
+  // On Linux: stable-x86_64-unknown-linux-gnu
+
+  // We have to use the GNU version of the Rust toolchain on Windows, because:
+  // - 1. VsCode with codelldb extension crashes at breakpoint for complex tokio (actix-web) projects. 
+  // It has to load too many symbols and it crashes with stack overflow. 
+  // The author of CodeLldb didn't have the time to fix this bug for the last 5 years. 
+  // He closed that bug that he will never fix. Note that for small non Tokio projects, there is no stack overflow crash, 
+  // so 90% of the Windows newbie developers don't notice the problem.
+  // - 2. Debug Watch window: String, vectors, slices, Path, PathBuf are not formatted properly. 
+  // Missig Python pretty formatters, because nobody cares about Rust development on Windows. 
+  // All professional Rust developers work on Linux as a desktop.
+
+  // >https://github.com/vadimcn/codelldb/wiki/Windows
+  // "LLDB supports both formats; however, PDB support is still less complete than DWARF and may exhibit bugs, including occasional debugger crashes. For this reason, using DWARF (and therefore, the GNU ABI) is recommended whenever possible."
+  // "LLDB does not yet fully support decoding Rust enums with PDB debug info.
+  // Prefer the x86_64-pc-windows-gnu toolchain for best debugging experience."
+
+  // >rust-toolchain.toml can’t specify to “use Windows GNU on Windows, but Linux GNU on Linux.”
+  // So, we set this up in launch.json that can specify default (used on Linux) or Windows specific commands:
+  // "windows": {
+  // 	"cargo": { "args": ["+stable-x86_64-pc-windows-gnu"..."
+
+  // >the Windows GNU toolchain need a MinGW-w64 linker toolchain available (commonly via MSYS2) for linking.
+  // So, you have to do the following:
+  // 	rustup toolchain install stable-x86_64-pc-windows-gnu
+  // >if you have error during cargo build: "error: error calling dlltool 'dlltool.exe': program not found"
+  // dlltool.exe is part of binutils and is required whenever a crate uses the cc crate to compile C code
+  // Install MinGW-w64 via MSYS2:
+  // Download and install MSYS2 from https://www.msys2.org/
+  // After installation, open MSYS2 MSYS (or MSYS2 MinGW x64) console terminal from the Start menu.
+  // Update the package manager: pacman -Syu  // (restart the terminal if it asks)
+  // Install the full 64-bit toolchain: pacman -S mingw-w64-x86_64-toolchain  // This includes gcc, binutils (with dlltool), make, etc
+  // Add the MinGW bin directory to your Windows PATH: Usually: C:\msys64\mingw64\bin
+  // Verify the tools are found: dlltool --version
+
   "version": "0.2.0",
   "configurations": [
+    // "lldb" with "cargo": CodeLLDB runs Cargo itself, parses the JSON build output, and picks the exact executable that was produced (so you never debug a stale/other-target binary).
+    // Also, CodeLLDB loads the Python pretty-printers that come with Rust, so you get nice variable views in the debugger.
+    // The disadvantage that it always recompiles the code, but that is OK. Actually, safer than debugging a stale binary.
     {
-      "name": "RqCoreSrv (DEBUG)",
+      "name": "RqCoreSrv (DEBUG, lldb cargo)", // LLDB with Cargo integration. 
       "type": "lldb",
       "request": "launch",
-      "program": "${workspaceFolder}/src/rqcoresrv/target/debug/rqcoresrv.exe",
-      "args": [],
+      "cargo": { "args": ["+stable", "build", "--manifest-path", "${workspaceFolder}/src/rqcoresrv/Cargo.toml","--bin", "rqcoresrv"] }, // on Linux
+      "windows": {
+        "cargo": { "args": ["+stable-x86_64-pc-windows-gnu", "build", "--manifest-path", "${workspaceFolder}/src/rqcoresrv/Cargo.toml", "--bin", "rqcoresrv"] } // force GNU toolchain on Windows (for debugging)
+      },
       "cwd": "${workspaceFolder}/src/rqcoresrv",
-      "console": "integratedTerminal",
-      "preLaunchTask": "cargo build rqcoresrv",
+      "args": [],
       "env": {
-        "RUST_LOG": "warn,rqcoresrv=info,ibapi=info"  // Set default log levels for debugging
+        "RUST_LOG": "warn,rqcoresrv=info,ibapi=info"
       }
     },
     {
-      "name": "open_urls_together (DEBUG)",
+      "name": "open_urls_together (DEBUG, lldb cargo)", // LLDB with Cargo integration. 
       "type": "lldb",
       "request": "launch",
-      "program": "${workspaceFolder}/src/tools/agy/open_urls_together/target/debug/open_urls_together.exe",
-      "args": [],
+      "cargo": { "args": ["+stable", "build", "--manifest-path", "${workspaceFolder}/src/tools/agy/open_urls_together/Cargo.toml","--bin", "open_urls_together"] }, // on Linux
+      "windows": {
+        "cargo": { "args": ["+stable-x86_64-pc-windows-gnu", "build", "--manifest-path", "${workspaceFolder}/src/tools/agy/open_urls_together/Cargo.toml", "--bin", "open_urls_together"] } // force GNU toolchain on Windows (for debugging)
+      },
       "cwd": "${workspaceFolder}/src/tools/agy/open_urls_together",
-      "console": "integratedTerminal",
-      "preLaunchTask": "cargo build open_urls_together"
+      "args": [],
     }
   ]
 }

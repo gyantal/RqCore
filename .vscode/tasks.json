@@ -1,11 +1,12 @@
 {
   "version": "2.0.0",
   "tasks": [
-    {
+    { // this uses: nightly-x86_64-pc-windows-msvc (from rust-toolchain.toml)
       "label": "cargo build rqcoresrv",
       "type": "shell",
       "command": "cargo build",
       "options": {
+
         "cwd": "${workspaceFolder}/src/rqcoresrv"
       },
       "group": {
