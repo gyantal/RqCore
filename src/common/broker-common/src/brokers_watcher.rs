@@ -1,13 +1,12 @@
-use std::sync::{Arc, LazyLock, Mutex};
-use std::env;
-
-// TODO: implement inside the rqcoresrv project now, but it will go to its own crate later in the /common folder
-
+use std::{sync::{Arc, LazyLock, Mutex}, env};
 use ibapi::Client;
 
-// ---------- Global ----------
+use rqcommon::utils::server_ip::{ServerIp};
+
+// ---------- Global static variables ----------
 pub static RQ_BROKERS_WATCHER: LazyLock<BrokersWatcher> = LazyLock::new(|| BrokersWatcher::new());
 
+// ---------- Gateway ----------
 pub struct Gateway {
     pub connection_url: String,
     pub client_id: i32,
@@ -30,6 +29,7 @@ impl Gateway {
 
     pub async fn init(&mut self) {
         log::debug!("Gateway.init() start");
+
         match Client::connect(&self.connection_url, self.client_id).await {
             Ok(client) => {
                 self.ib_client = Some(Arc::new(client));
@@ -51,6 +51,7 @@ impl Gateway {
     }
 }
 
+// ---------- BrokersWatcher ----------
 pub struct BrokersWatcher {
     // TODO: use Arc<Mutex<BrokersWatcher>>
     // This Mutex will assures that only 1 thread can access the BrokerWatcher, which is too much restriction,
@@ -86,16 +87,17 @@ impl BrokersWatcher {
 
     pub async fn init(&self) {
         log::info!("BrokersWatcher.init() start");
-        // Initialize all gateways with their default configurations
-        let connection_url_dcmain = "34.251.1.119:7303"; // port info is fine here. OK. Temporary anyway, and login is impossible, because there are 2 firewalls with source-IP check: AwsVm, IbTWS
+        // Initialize all gateways
         let client_id = Self::gateway_client_id();
-        let mut gateway0 = Gateway::new(connection_url_dcmain, client_id);
-        gateway0.init().await;
         let mut gateways = self.gateways.lock().unwrap();
+
+        let connection_url_dcmain = [ServerIp::sq_core_server_public_ip_for_clients(), ":", ServerIp::IB_SERVER_PORT_DCMAIN.to_string().as_str()].concat();
+        let mut gateway0 = Gateway::new(&connection_url_dcmain, client_id);
+        gateway0.init().await;
         gateways.push(Arc::new(Mutex::new(gateway0)));
 
-        let connection_url_gyantal = "34.251.1.119:7301";
-        let mut gateway1 = Gateway::new(connection_url_gyantal, client_id);
+        let connection_url_gyantal = [ServerIp::sq_core_server_public_ip_for_clients(), ":", ServerIp::IB_SERVER_PORT_GYANTAL.to_string().as_str()].concat();
+        let mut gateway1 = Gateway::new(&connection_url_gyantal, client_id);
         gateway1.init().await;
         gateways.push(Arc::new(Mutex::new(gateway1)));
     }

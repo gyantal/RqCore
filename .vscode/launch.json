@@ -34,7 +34,7 @@
   // >if you have error during cargo build: "error: error calling dlltool 'dlltool.exe': program not found"
   // dlltool.exe is part of binutils and is required whenever a crate uses the cc crate to compile C code
   // Install MinGW-w64 via MSYS2:
-  // Download and install MSYS2 from https://www.msys2.org/
+  // Download and install MSYS2 from https://www.msys2.org/ (e.g. latest version of msys2-x86_64-20251213.exe)
   // After installation, open MSYS2 MSYS (or MSYS2 MinGW x64) console terminal from the Start menu.
   // Update the package manager: pacman -Syu  // (restart the terminal if it asks)
   // Install the full 64-bit toolchain: pacman -S mingw-w64-x86_64-toolchain  // This includes gcc, binutils (with dlltool), make, etc

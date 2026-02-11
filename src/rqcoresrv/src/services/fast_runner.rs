@@ -259,17 +259,17 @@ impl FastRunner {
 
         // Determine PV Portfolio Values to play. If both PQP and AP run today, then we can split the PV between them. If only one of them runs, then we can allocate all PV to that one.
         if self.pqp_is_run_today && self.ap_is_run_today { // future target: 70K+70K+60K short =200K.
-            self.pqp_buy_pv = 60000.0;
-            self.pqp_sell_pv = 40000.0;
-            self.ap_buy_pv = 60000.0;
+            self.pqp_buy_pv = 70000.0;
+            self.pqp_sell_pv = 60000.0;
+            self.ap_buy_pv = 70000.0;
         } else if self.pqp_is_run_today {
-            self.pqp_buy_pv = 120000.0;
-            self.pqp_sell_pv = 40000.0;
+            self.pqp_buy_pv = 140000.0;
+            self.pqp_sell_pv = 60000.0;
             self.ap_buy_pv = 0.0;
         } else if self.ap_is_run_today {
             self.pqp_buy_pv = 0.0;
             self.pqp_sell_pv = 0.0;
-            self.ap_buy_pv = 120000.0;
+            self.ap_buy_pv = 200000.0;
         } else {
             self.pqp_buy_pv = 0.0;
             self.pqp_sell_pv = 0.0;
@@ -501,7 +501,7 @@ impl FastRunner {
         println!("Process New BUYS ({}):", new_buy_events.len());
         for event in &new_buy_events {
             println!("  {} ({}, ${}, ${}, event)", event.ticker, event.company_name, event.price.as_deref().unwrap_or("N/A"), event.pos_market_value);
-            let contract = Contract::stock(&event.ticker).build();
+            let contract = Contract::stock(&event.ticker).build(); // Contract is just a thin wrapper. For invalid tickers, the Contract 'seems' to be OK, sadly. Invalid ticker will only turn out when we use that Contract (e.g. getting real-time bar)
             // print the contract details
             println!("  Contract details: {:?}", contract); // TODO: inspect these to see if we can catch early if GMTLF is not supported by IB. "No security definition has been found for the request". In that case, don't try to get price that takes 500ms.
             let price = get_price(&ib_client_dcmain, event, &contract).await;
@@ -809,6 +809,9 @@ async fn get_price(ib_client_dcmain: &Arc<Client>, event: &TransactionEvent, con
                 // Error is raised here if we don't have realtime market data for that stock. In that case, price stays as NaN and we skip that single trade, but continue with other trades.
                 // 2025-12-22: XIACY (ADR): "Parse(5, "Invalid Real-time Query:No market data permissions for ARCAEDGE STK", "invalid float literal")"
                 // 2026-01-26: GMTLF (IB doesn't have the stock): "Parse(5, "No security definition has been found for the request", "invalid float literal")"
+                // 2026-02-09: NTOIY: "Invalid Real-time Query:No market data permissions for ARCAEDGE STK", "invalid float literal"
+                //      The reason is that Pink Stock. In TWS, I have ask-bid prices, but no 5sec bar chart. Empty 5sec chart. There is 1min chart.
+                //      IB also warns that This stock has limited liquidatidy. So, actually it is better that I cannot trade this.
                 Err(e) => eprintln!("Error in realtime_bars subscription: {e:?}"),
             }
             let elapsed_microsec = start.elapsed().as_secs_f64() * 1_000_000.0;

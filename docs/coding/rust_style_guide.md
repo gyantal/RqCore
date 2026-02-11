@@ -130,3 +130,23 @@ SERVER_APP_START_TIME.set(Utc::now());
 SERVER_APP_START_TIME.set(Utc::now()).ok();
 }
 ```
+
+## String (&str) concat
+
+Fastest/lowest-overhead for two &str is: one allocation, two appends.
+```rust
+let mut result = String::with_capacity(str1.len() + str2.len());
+result.push_str(str1);
+result.push_str(str2);
+```
+However, that is 3 lines, which is too much to read for simple concat.
+So, instead, Array's concat is nearly as efficient (it also sums lengths internally), and allocates only once. It does basically the same thing as a one-liner:
+```rust
+[str1, str2].concat() // This is the suggested way!
+```
+
+Other slower ways (use them less often, and not in fast intended code. In init() functions, it is fine, when it only runs once):
+let result: String = format!("{}{}", str1, str2); // this brings the formatter mechanism and more internal re-allocation as it appends more and more inputs.
+
+let result: String = str1.to_owned() + str2; // The '+' operator works on String + &str, so own the first one.
+Cons: Creates an intermediate String from the first &str.

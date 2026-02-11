@@ -7,16 +7,14 @@ use chrono::{Local, Utc, DateTime};
 use actix_web::dev::ServerHandle;
 use ibapi::{prelude::*, market_data::historical::WhatToShow};
 
-use rqcommon::utils::runningenv::{load_rqcore_config, RqCoreConfig}; // no need of mod rqcommon as that is in Cargo.toml as a dependency.
+use rqcommon::utils::runningenv::{load_rqcore_config, RqCoreConfig}; // no need of mod rqcommon, broker-common as that is in Cargo.toml as a dependency.
+use broker_common::brokers_watcher::RQ_BROKERS_WATCHER;
 
 // All compile target *.rs files in all folders should be mentioned as modules somehow.
 // That is the way how only main.rs is compiled by 'cargo build', and that imports all the other .rs files as modules.
 // If we don't mention them here as 'mod', they won't be compiled at all,
 // and we will get 'cannot find module' error when using them in main.rs or main_web.rs
 // *.rs files can be mentioned here one by one in main.rs, or in mod.rs of the specific subfolders (more localized there, less cluttering here if there are many *.rs files in the subfolder).
-mod broker_common {
-    pub mod brokers_watcher; // refers ./broker_common/brokers_watcher.rs
-}
 mod middleware; // refers ./middleware/mod.rs (that refers to many other *.rs files)
 // no 'use crate::middleware' here, because main_web.rs uses those, and we refer to them there
 mod services; // refers ./services/mod.rs
@@ -25,17 +23,9 @@ mod webapps; // refers ./webapps/mod.rs
 mod main_web; // refers main_web.rs as a module
 
 use crate::{
-    broker_common::brokers_watcher::RQ_BROKERS_WATCHER,
     services::rqtask_scheduler::{RQ_TASK_SCHEDULER, HeartbeatTask, FastRunnerPqpTask, FastRunnerApTask, RqTask},
     main_web::actix_websrv_run,
 };
-
-// ---------- Class/struct definitions ----------
-struct RuntimeInfo {
-    logical_cpus: usize,
-    server_workers: usize,
-    pid: u32,
-}
 
 // ---------- Global static variables ----------
 pub static SERVER_APP_START_TIME: OnceLock<DateTime<Utc>> = OnceLock::new();
@@ -61,6 +51,13 @@ pub fn get_rqcore_config() -> &'static RqCoreConfig {
             }
         }
     })
+}
+
+// ---------- Class/struct definitions ----------
+struct RuntimeInfo {
+    logical_cpus: usize,
+    server_workers: usize,
+    pid: u32,
 }
 
 // ---------- Helpers ----------

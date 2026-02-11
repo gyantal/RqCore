@@ -39,5 +39,6 @@ ibapi = "2.6"
 # ibapi = { version = "2.0", default-features = false, features = ["sync", "async"] }
 
 rqcommon = { path = "../common/rqcommon" }
+broker-common = { path = "../common/broker-common" }
 
 [dev-dependencies]
