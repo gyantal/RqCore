@@ -7,7 +7,7 @@ use {
 
 use rqcommon::{log_and_println, utils::time::localtimeonly2future_datetime_tz};
 
-use crate::services::fast_runner::FastRunner;
+use crate::robotrader::fast_runner::FastRunner;
 
 // ---------- Global static variables ----------
 pub static RQ_TASK_SCHEDULER: LazyLock<RqTaskScheduler> = LazyLock::new(|| RqTaskScheduler::new());

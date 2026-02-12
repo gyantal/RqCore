@@ -1,73 +1,26 @@
-use std::{sync::{Arc, LazyLock, Mutex}, env};
-use ibapi::{Client, ConnectionOptions};
+use std::{sync::{Arc, LazyLock, Mutex}, env, time::Instant};
+use ibapi::prelude::*;
 
-use rqcommon::utils::server_ip::{ServerIp};
+use rqcommon::{log_and_println, utils::server_ip::ServerIp};
+
+use crate::gateway::Gateway;
 
 // ---------- Global static variables ----------
 pub static RQ_BROKERS_WATCHER: LazyLock<BrokersWatcher> = LazyLock::new(|| BrokersWatcher::new());
 
-// ---------- Gateway ----------
-pub struct Gateway {
-    pub connection_url: String,
-    pub client_id: i32,
-
-    // https://github.com/wboayue/rust-ibapi
-    // The Client can be shared between threads to support concurrent operations. let client = Arc::clone(&client);
-    
-    // The Client is shared safely via Arc so it can be cloned and used across awaits.
-    pub ib_client: Option<Arc<Client>>,
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RqOrderType {
+    Buy,
+    Sell,
 }
 
-impl Gateway {
-    pub fn new(connection_url: &str, client_id: i32) -> Self {
-        Self {
-            connection_url: connection_url.to_string(),
-            client_id,
-            ib_client: None,
-        }
-    }
-
-    pub async fn init(&mut self) {
-        log::debug!("Gateway.init() start");
-
-        // tcp_no_delay: "Order submissions: 0-40ms latency reduction (small writes sent immediately)"
-	    // "Nagle's algorithm is a TCP optimization technique designed to improve network efficiency by reducing the number of small packets 
-        // sent over the network. It works by buffering and combining small outgoing data chunks into larger packets before transmission, 
-        // rather than sending them immediately. Specifically, it delays sending new data if there is unacknowledged data already in flight, 
-        // waiting until either an acknowledgment (ACK) is received or enough data accumulates to fill a full TCP segment. 
-        // This helps minimize overhead from packet headers, especially on slower or congested networks, but it can introduce latency"
-        // Typical latency you might save (rule of thumb): (~40-200-500ms)
-        //      Windows: delayed ACK timer is 200 ms, so a “Nagle + delayed ACK” interaction can show up as ~200 ms stalls in certain write patterns.
-        //      Linux/RHEL: people commonly see ~40 ms-ish delays (and it’s tunable; RHEL shows knobs like tcp_delack_min).
-        //      TCP specs allow ACKs to be delayed but must happen within 500 ms (upper bound).
-        let options = ConnectionOptions::default()
-            .tcp_no_delay(true)
-            .startup_callback(|msg| { 
-                // When TWS sends messages like OpenOrder or OrderStatus during the connection handshake, this callback processes them instead of discarding.
-                // AccountInfo connection startup messages are handled by ib-api. Only not-recognized (unsolicited) messages arrive here. If there is no OpenOrder, this is not called ever.
-                println!("TWS connection established. startup_callback()");
-                println!("TWS connection established. startup_callback() msg: {:#?}", msg);
-            });
-
-        match Client::connect_with_options(&self.connection_url, self.client_id, options).await {
-            Ok(client) => {
-                self.ib_client = Some(Arc::new(client));
-                log::info!("Connected to TWS at {}", self.connection_url);
-            }
-            Err(e) => {
-                log::error!(
-                    "Failed to connect to TWS at {}: {}",
-                    self.connection_url, e
-                );
-            }
-        }
-    }
-
-    pub async fn exit(&mut self) {
-        // Client is automatically disconnected when dropped
-        self.ib_client = None; // disconnect on drop
-        log::info!("Disconnected from TWS at {}", self.connection_url);
-    }
+#[derive(Debug, Clone)]
+pub struct RqOrder {
+    pub order_type: RqOrderType,
+    pub ticker: String,
+    pub company_name: String,
+    pub pos_market_value: f64,
+    pub known_last_price: Option<f64>,
 }
 
 // ---------- BrokersWatcher ----------
@@ -87,22 +40,25 @@ impl BrokersWatcher {
     }
 
     pub fn gateway_client_id() -> i32 {
-    if env::consts::OS == "windows" { // On windows, use USERDOMAIN, instead of USERNAME, because USERNAME can be the same on multiple machines (e.g. "gyantal" on both GYANTAL-PC and GYANTAL-LAPTOP)
-        let userdomain = env::var("USERDOMAIN").expect("Failed to get USERDOMAIN environment variable");
-        match userdomain.as_str() {
-            "GYANTAL-PC" => 210,
-            "GYANTAL-LAPTOP" => 211,
-            "BALAZS-PC" => 212,
-            "BALAZS-LAPTOP" => 213,
-            "DAYA-DESKTOP" => 214,
-            "DAYA-LAPTOP" => 215,
-            "DRCHARMAT-LAPTOP" => 216,
-            _ => panic!("Windows user name is not recognized. Add your username and folder here!"),
+        if env::consts::OS == "windows" {
+            // On windows, use USERDOMAIN, instead of USERNAME, because USERNAME can be the same on multiple machines (e.g. "gyantal" on both GYANTAL-PC and GYANTAL-LAPTOP)
+            let userdomain = env::var("USERDOMAIN").expect("Failed to get USERDOMAIN environment variable");
+            match userdomain.as_str() {
+                "GYANTAL-PC" => 210,
+                "GYANTAL-LAPTOP" => 211,
+                "BALAZS-PC" => 212,
+                "BALAZS-LAPTOP" => 213,
+                "DAYA-DESKTOP" => 214,
+                "DAYA-LAPTOP" => 215,
+                "DRCHARMAT-LAPTOP" => 216,
+                _ => panic!(
+                    "Windows user name is not recognized. Add your username and folder here!"
+                ),
+            }
+        } else { // Linux and MacOS
+            200
         }
-    } else { // Linux and MacOS
-        200
     }
-}
 
     pub async fn init(&self) {
         log::info!("BrokersWatcher.init() start");
@@ -127,5 +83,119 @@ impl BrokersWatcher {
             gateway.lock().unwrap().exit().await;
         }
         gateways.clear();
+    }
+
+    // TODO: future features.
+    // BrokersWatches should access a global YahooFinance price cache, and if the price is fresh (e.g. within 1 min), then it can use that price instead of calling IB get_price() which can be slow (e.g. 1-2 seconds). 
+    // This will speed up the order placing a lot, because we can avoid calling IB get_price() [550ms] for every order.
+    pub async fn place_orders(&self, orders: Vec<RqOrder>, is_simulation: bool) {
+        if orders.is_empty() {
+            log_and_println!("BrokersWatcher.place_orders(): no orders.");
+            return;
+        }
+
+        // Acquire and clone the ib_client handles (Arc<Client>) without holding locks across await
+        let ib_client_gyantal = { // 0 is dcmain, 1 is gyantal
+            let gateways = self.gateways.lock().unwrap();
+            gateways[1].lock().unwrap().ib_client.as_ref().cloned().expect("ib_client is not initialized")
+        };
+        let ib_client_dcmain = { // 0 is dcmain, 1 is gyantal
+            let gateways = self.gateways.lock().unwrap();
+            gateways[0].lock().unwrap().ib_client.as_ref().cloned().expect("ib_client is not initialized")
+        };
+
+        // This will do a real trade. To prevent trade happening you have 3 options.
+        // 1. Comment out ib_client.order() (for both Buy/Sell) Just comment it back in when you want to trade.
+        // 2. Another option to prevent trade: is_simulation bool.
+        // 3. Another option to prevent trade: in IbGateway settings, check in "ReadOnly API".
+        log_and_println!("BrokersWatcher.place_orders(): {} order(s). Simulation: {}", orders.len(), is_simulation);
+
+        // TODO: if YahooFinance price cache is implemented. 2 loops are needed for fast execution. First loop gets prices from YF cache.
+        // If price is not found in YF cache, it puts those orders in a 'unknown_price_orders' list to be processed in the second loop, which calls IB get_price() taking 550ms per order.
+        for order in &orders {
+            let known_price_str = order.known_last_price.map(|p| format!("{:.4}", p)).unwrap_or_else(|| "N/A".to_string());
+            log_and_println!("  {:?} {} ({}, known_last_price: ${}, target posValue: ${}, before get_price())", order.order_type, order.ticker, order.company_name, known_price_str, order.pos_market_value);
+
+            let contract = Contract::stock(&order.ticker).build();
+            let price = Self::get_price(&ib_client_dcmain, &order.ticker, &order.company_name, order.known_last_price, &contract).await;
+            if price.is_nan() {
+                log_and_println!("  {:?} {} ({}, cannot determine price, skipping...)", order.order_type, order.ticker, order.company_name);
+                continue;
+            }
+
+            let num_shares = (order.pos_market_value / price).floor() as i32;
+            if num_shares <= 0 {
+                log_and_println!("  {:?} {} ({}, price: ${}, nShares: {}, skipping...)", order.order_type, order.ticker, order.company_name, price, num_shares);
+                continue;
+            }
+
+            log_and_println!("  {:?} {} ({}, price: ${}, nShares: {}, before order())", order.order_type, order.ticker, order.company_name, price, num_shares);
+
+            if is_simulation {
+                continue;
+            }
+
+            let order_id = match order.order_type {
+                RqOrderType::Buy => {
+                    ib_client_gyantal
+                        .order(&contract)
+                        .buy(num_shares)
+                        // .market()
+                        // Limit buy order at 2.1% above the price. IB rejects too-wide LMT orders.
+                        .limit(((price * 1.021) * 100.0).round() / 100.0)
+                        .submit()
+                        .await
+                        .expect("order submission failed!")
+                }
+                RqOrderType::Sell => {
+                    ib_client_gyantal
+                        .order(&contract)
+                        .sell(num_shares)
+                        // .market()
+                        // Limit sell order at -2.1% below price
+                        .limit(((price * 0.979) * 100.0).round() / 100.0)
+                        .submit()
+                        .await
+                        .expect("order submission failed!")
+                }
+            };
+
+            log_and_println!("Order submitted: OrderID: {}, Ticker: {}, Shares: {}", order_id, contract.symbol, num_shares);
+        }
+    }
+
+    pub async fn get_price(ib_client_dcmain: &Arc<Client>, ticker: &str, company_name: &str, known_last_price: Option<f64>, contract: &Contract) -> f64 {
+        if let Some(price) = known_last_price {
+            if !price.is_nan() {
+                return price;
+            }
+        }
+
+        // TODO: there is probably a better way to get the last price, e.g. via market data snapshot than streaming real-time bars.
+        // Also, it only works during market hours. After market closes, it doesn't return any bars and we wait forever.
+        // We ask the 5 seconds bars, but luckily the first bar comes immediately. Later new bars arrive every 5 seconds.
+        let start = Instant::now();
+        let mut subscription = ib_client_dcmain
+            .realtime_bars(contract, RealtimeBarSize::Sec5, RealtimeWhatToShow::Trades, TradingHours::Regular)
+            .await
+            .expect("realtime bars request failed!");
+
+        log_and_println!("  {} ({}, waiting for real-time bar...)", ticker, company_name);
+
+        let mut price = f64::NAN;
+        while let Some(bar_result) = subscription.next().await {
+            match bar_result {
+                Ok(bar) => {
+                    log_and_println!("  {bar:?}");
+                    price = bar.close;
+                }
+                Err(e) => log::error!("Error in realtime_bars subscription: {e:?}"),
+            }
+            let elapsed_microsec = start.elapsed().as_secs_f64() * 1_000_000.0;
+            log_and_println!("  Elapsed Time of ib_client.realtime_bars(): {:.2}us", elapsed_microsec);
+            break; // just 1 bar
+        }
+
+        price
     }
 }

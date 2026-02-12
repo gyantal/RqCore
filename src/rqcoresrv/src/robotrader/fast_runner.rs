@@ -1,9 +1,10 @@
 use chrono::{Datelike, Local, Utc};
-use ibapi::{prelude::*};
 use serde::Deserialize;
-use std::{collections::HashMap, fs, path::{Path, PathBuf}, sync::{Arc}, time::{Instant, SystemTime}};
+use std::{collections::HashMap, fs, path::{Path, PathBuf}, time::{SystemTime}};
 use rqcommon::{log_and_println, log_and_if_println, utils::time::{benchmark_elapsed_time, benchmark_elapsed_time_async}};
-use crate::RQ_BROKERS_WATCHER;
+
+use broker_common::brokers_watcher::{RqOrder, RqOrderType};
+use crate::robotrader::robo_trader::RoboTrader;
 
 #[derive(Debug, Deserialize)]
 pub struct PqpResponse {
@@ -337,30 +338,11 @@ impl FastRunner {
         }
 
         log_and_if_println!(true, "Found {} transactions, {} stocks", transactions.len(), stocks.len());
-        // Print first transaction example
-        // if let Some(first_tx) = transactions.first() {
-        //     log_and_println!("First transaction: id={}, action={}, price={:?}, tickerId={}", 
-        //         first_tx.attributes.id, 
-        //         first_tx.attributes.action, 
-        //         first_tx.attributes.price,
-        //         first_tx.relationships.ticker.data.id
-        //     );
-        // }
-
         // Print all transactions
         // for transaction in &transactions {
         //     let ticker_id = &transaction.relationships.ticker.data.id;
         //     if let Some(stock) = stocks.get(ticker_id) {
-        //         log_and_println!(
-        //             "Tr {}: {} {} {} weight of {} ({}) at ${}",
-        //             transaction.attributes.id,
-        //             transaction.attributes.actionDate,
-        //             transaction.attributes.action,
-        //             transaction.attributes.new_weight,
-        //             stock.attributes.name,
-        //             stock.attributes.companyName,
-        //             transaction.attributes.price.as_deref().unwrap_or("N/A"),
-        //         );
+        //         log_and_println!("Tr {}: {} {} {} weight of {} ({}) at ${}", transaction.attributes.id, transaction.attributes.actionDate, transaction.attributes.action, transaction.attributes.new_weight, stock.attributes.name, stock.attributes.companyName, transaction.attributes.price.as_deref().unwrap_or("N/A"));
         //     }
         // }
 
@@ -461,94 +443,27 @@ impl FastRunner {
 
         self.determine_position_market_values_pqp_gyantal(&mut new_buy_events, &mut new_sell_events); // replace it to blukucz if needed
 
-        // Acquire and clone the ib_client handle (Arc<Client>) without holding locks across await
-        let ib_client_gyantal = { // 0 is dcmain, 1 is gyantal
-            let gateways = RQ_BROKERS_WATCHER.gateways.lock().unwrap();
-            gateways[1]
-                .lock()
-                .unwrap()
-                .ib_client
-                .as_ref()
-                .cloned()
-                .expect("ib_client is not initialized")
-        };
-        let ib_client_dcmain = { // 0 is dcmain, 1 is gyantal
-            let gateways = RQ_BROKERS_WATCHER.gateways.lock().unwrap();
-            gateways[0]
-                .lock()
-                .unwrap()
-                .ib_client
-                .as_ref()
-                .cloned()
-                .expect("ib_client is not initialized")
-        };
-
-        // This will do a real trade. To prevent trade happening you have 3 options.
-        // 1. Comment out ib_client.order() (for both Buy/Sell) Just comment it back in when you want to trade.
-        // 2. Another option to prevent trade:self.is_simulation bool is true by default.
-        // 3.Another option to prevent trade: is in IbGateway settings, check in "ReadOnly API", that will prevent the trades.
-        log_and_println!("Loop: On {}, Process New BUYS ({}):", target_action_date, new_buy_events.len());
+        let mut orders: Vec<RqOrder> = Vec::with_capacity(new_buy_events.len() + new_sell_events.len());
         for event in &new_buy_events {
-            log_and_println!("  {} ({}, price: ${}, target posValue: ${}, before get_price())", event.ticker, event.company_name, event.price.as_deref().unwrap_or("N/A"), event.pos_market_value);
-            let contract = Contract::stock(&event.ticker).build(); // Contract is just a thin wrapper. For invalid tickers, the Contract 'seems' to be OK, sadly. Invalid ticker will only turn out when we use that Contract (e.g. getting real-time bar)
-            let price = get_price(&ib_client_dcmain, event, &contract).await;
-            if price.is_nan() { // If no price (e.g. no real-time market data for ADR, OTC), we cannot calculate nShares, not even MKT orders possible, we skip only this trade, but don't panic and do other trades
-                log_and_println!("  {} ({}, cannot determine price, skipping...)", event.ticker, event.company_name);
-                continue;
-            }
-
-            let num_shares = (event.pos_market_value / price).floor() as i32;
-            log_and_println!("  {} ({}, price: ${}, nShares: {}, before order())", event.ticker, event.company_name, price, num_shares);
-
-            if self.is_simulation // prevent trade in simulation mode
-                { continue;}
-
-            // IBKR enforces a 50 requests/second limit. The default behaviour is that IbGateway to apply pacingdelays to requests that exceed the limit, which is OK.
-            // In IbGateway API options, we can force it to "Reject messages above the maximum allowed message rate vs. applying pacing". But this is off.
-            // If it was a reject, then we should call `rate_limit()` before each API request to stay under the limit. 
-            // Uses a token bucket — the first 50 requests pass instantly, then requests are spaced to maintain the average.
-            // There is a rate_limit() in ibapi_test that we can use. But since we have only max 14 trades, and each trade has 1-2 API calls, we are far from the limit.
-            // Also, that implementation is global. With a static RATE_LIMITER. We will have to implement it per Connection (if ever needed)
-            // ibapi_test::rate_limit(); // not necessary to use, as IbGateway will automatically pace the requests that exceed the limit.
-            let order_id = ib_client_gyantal.order(&contract)
-                .buy(num_shares)
-                // .market()
-                // Limit buy order at 4.5% above the price. IB rejects LMT orders if the lmt price is > 4.9% (if it is too wide)
-                // Limit buy order at 2.5% above the price. IB rejects LMT orders if the lmt price is > 2.7% (if it is too wide)
-                // "Order Canceled - reason:We cannot accept an order at a limit price at or more aggressive than"
-                // 2026-01-15: 2.5% is too aggressive. IB's max LMT threshold was 2.46% higher. IB cancelled the order. We have to go back to 2.1%.
-                .limit(((price * 1.021) * 100.0).round() / 100.0) // price must be set to max 2 decimal, otherwise IB error: "-The price does not conform to the minimum price variation for this contract.--"
-                .submit()
-                .await
-                .expect("order submission failed!");
-            log_and_println!("Order submitted: OrderID: {}, Ticker: {}, Shares: {}", order_id, contract.symbol, num_shares);
+            orders.push(RqOrder {
+                order_type: RqOrderType::Buy,
+                ticker: event.ticker.clone(),
+                company_name: event.company_name.clone(),
+                pos_market_value: event.pos_market_value,
+                known_last_price: event.price.as_deref().and_then(|s| s.parse::<f64>().ok()),
+            });
         }
-        
-        log_and_println!("Process New SELLS ({}):", new_sell_events.len());
         for event in &new_sell_events {
-            log_and_println!("  {} ({}, ${}, ${}, event)", event.ticker, event.company_name, event.price.as_deref().unwrap_or("N/A"), event.pos_market_value);
-            let contract = Contract::stock(&event.ticker).build();
-            let price = get_price(&ib_client_dcmain, event, &contract).await;
-            if price.is_nan() { // If no price (e.g. no real-time market data for ADR, OTC), we cannot calculate nShares, not even MKT orders possible, we skip only this trade, but don't panic and do other trades
-                log_and_println!("  {} ({}, cannot determine price, skipping...)", event.ticker, event.company_name);
-                continue;
-            }
-
-            let num_shares = (event.pos_market_value / price).floor() as i32;
-            log_and_println!("  {} ({}, price: ${}, nShares: {}, order)", event.ticker, event.company_name, price, num_shares);
-
-            if self.is_simulation // prevent trade in simulation mode
-                { continue;}
-            let order_id = ib_client_gyantal.order(&contract)
-                .sell(num_shares)
-                //.market()
-                // Limit sell order at -2.1% below price
-                .limit(((price * 0.979) * 100.0).round() / 100.0) // price must be set to max 2 decimal, otherwise IB error: "-The price does not conform to the minimum price variation for this contract.--"
-                .submit()
-                .await
-                .expect("order submission failed!");
-            log_and_println!("Order submitted: OrderID: {}, Ticker: {}, Shares: {}", order_id, contract.symbol, num_shares);
+            orders.push(RqOrder {
+                order_type: RqOrderType::Sell,
+                ticker: event.ticker.clone(),
+                company_name: event.company_name.clone(),
+                pos_market_value: event.pos_market_value,
+                known_last_price: event.price.as_deref().and_then(|s| s.parse::<f64>().ok()),
+            });
         }
+
+        RoboTrader::place_orders("SA_PQP", orders, self.is_simulation).await;
     }
 
 
@@ -710,97 +625,18 @@ impl FastRunner {
 
         self.determine_position_market_values_ap_gyantal(&mut new_buy_events); // replace it to blukucz if needed
 
-        // Acquire and clone the ib_client handle (Arc<Client>) without holding locks across await
-        let ib_client_gyantal = { // 0 is dcmain, 1 is gyantal
-            let gateways = RQ_BROKERS_WATCHER.gateways.lock().unwrap();
-            gateways[1]
-                .lock()
-                .unwrap()
-                .ib_client
-                .as_ref()
-                .cloned()
-                .expect("ib_client is not initialized")
-        };
-        let ib_client_dcmain = { // 0 is dcmain, 1 is gyantal
-            let gateways = RQ_BROKERS_WATCHER.gateways.lock().unwrap();
-            gateways[0]
-                .lock()
-                .unwrap()
-                .ib_client
-                .as_ref()
-                .cloned()
-                .expect("ib_client is not initialized")
-        };
-
-        // This will do a real trade. To prevent trade happening you have 3 options.
-        // 1. Comment out ib_client.order() (for both Buy/Sell) Just comment it back in when you want to trade.
-        // 2. Another option to prevent trade:self.is_simulation bool is true by default.
-        // 3.Another option to prevent trade: is in IbGateway settings, check in "ReadOnly API", that will prevent the trades.
-        log_and_println!("Loop: On {}, Process New BUYS ({}):", target_action_date, new_buy_events.len());
+        let mut orders: Vec<RqOrder> = Vec::with_capacity(new_buy_events.len());
         for event in &new_buy_events {
-            log_and_println!("  {} ({}, price: ${}, target posValue: ${}, before get_price())", event.ticker, event.company_name, event.price.as_deref().unwrap_or("N/A"), event.pos_market_value);
-            let contract = Contract::stock(&event.ticker).build();
-            let price = get_price(&ib_client_dcmain, event, &contract).await;
-            if price.is_nan() { // If no price (e.g. no real-time market data for ADR, OTC), we cannot calculate nShares, not even MKT orders possible, we skip only this trade, but don't panic and do other trades
-                log_and_println!("  {} ({}, cannot determine price, skipping...)", event.ticker, event.company_name);
-                continue;
-            }
-
-            let num_shares = (event.pos_market_value / price).floor() as i32;
-            log_and_println!("  {} ({}, price: ${}, nShares: {}, before order())", event.ticker, event.company_name, price, num_shares);
-
-            if self.is_simulation // prevent trade in simulation mode
-                { continue;}
-            let order_id = ib_client_gyantal.order(&contract)
-                .buy(num_shares)
-                // .market()
-                .limit(((price * 1.021) * 100.0).round() / 100.0) // price must be set to max 2 decimal, otherwise IB error: "-The price does not conform to the minimum price variation for this contract.--"
-                .submit()
-                .await
-                .expect("order submission failed!");
-            log_and_println!("Order submitted: OrderID: {}, Ticker: {}, Shares: {}", order_id, contract.symbol, num_shares);
+            orders.push(RqOrder {
+                order_type: RqOrderType::Buy,
+                ticker: event.ticker.clone(),
+                company_name: event.company_name.clone(),
+                pos_market_value: event.pos_market_value,
+                known_last_price: event.price.as_deref().and_then(|s| s.parse::<f64>().ok()),
+            });
         }
+
+        RoboTrader::place_orders("SA_AP", orders, self.is_simulation).await;
     }
 
-}
-
-async fn get_price(ib_client_dcmain: &Arc<Client>, event: &TransactionEvent, contract: &Contract) -> f64 {
-    let mut price = f64::NAN;
-    if !event.price.is_none() {
-        let price_str = event.price.as_ref().unwrap();
-        if !price_str.parse::<f64>().is_err() {
-            price = price_str.parse::<f64>().unwrap();
-        }
-    }
-    if price.is_nan() { // typical for new stocks that Price/Share column is "Scheduled" on the day of the release
-        // TODO: there is probably a better way to get the last price, e.g. via market data snapshot than streaming real-time bars. 
-        // Also, it only works during market hours. After market closes, it doesn't return any bars and we wait forever.
-        // We ask the 5 seconds bars, but luckily the first bar comes immediately. Later new bars arrive every 5 seconds.
-        // ib_client_gyantal: Error: Parse(5, "Invalid Real-time Query:No market data permissions for NYSE STK. Requested market data requires additional subscription for API. See link in 'Market Data Connections' dialog for more details."
-        let start = Instant::now();
-        let mut subscription = ib_client_dcmain
-            .realtime_bars(contract, RealtimeBarSize::Sec5, RealtimeWhatToShow::Trades, TradingHours::Regular).await
-            .expect("realtime bars request failed!");
-
-        log_and_println!("  {} ({}, waiting for real-time bar...) , ", event.ticker, event.company_name);
-        while let Some(bar_result) = subscription.next().await {
-            match bar_result {
-                Ok(bar) => { 
-                    log_and_println!("  {bar:?}"); 
-                    price = bar.close; 
-                },
-                // Error is raised here if we don't have realtime market data for that stock. In that case, price stays as NaN and we skip that single trade, but continue with other trades.
-                // 2025-12-22: XIACY (ADR): "Parse(5, "Invalid Real-time Query:No market data permissions for ARCAEDGE STK", "invalid float literal")"
-                // 2026-01-26: GMTLF (IB doesn't have the stock): "Parse(5, "No security definition has been found for the request", "invalid float literal")"
-                // 2026-02-09: NTOIY: "Invalid Real-time Query:No market data permissions for ARCAEDGE STK", "invalid float literal"
-                //      The reason is that Pink Stock. In TWS, I have ask-bid prices, but no 5sec bar chart. Empty 5sec chart. There is 1min chart.
-                //      IB also warns that This stock has limited liquidatidy. So, actually it is better that I cannot trade this.
-                Err(e) => log::error!("Error in realtime_bars subscription: {e:?}"),
-            }
-            let elapsed_microsec = start.elapsed().as_secs_f64() * 1_000_000.0;
-            log_and_println!("  Elapsed Time of ib_client.realtime_bars(): {:.2}us", elapsed_microsec); // about 430-550ms first bar, then subsequent bars every 5s
-            break; // just 1 bar for testing, otherwise it would block here forever
-        }
-    }
-    price
 }

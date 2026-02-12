@@ -18,6 +18,7 @@ use broker_common::brokers_watcher::RQ_BROKERS_WATCHER;
 mod middleware; // refers ./middleware/mod.rs (that refers to many other *.rs files)
 // no 'use crate::middleware' here, because main_web.rs uses those, and we refer to them there
 mod services; // refers ./services/mod.rs
+mod robotrader; // refers ./robotrader/mod.rs
 mod webapps; // refers ./webapps/mod.rs
 // no 'use crate::webapps' here, because main_web.rs uses those, and we refer to them there
 mod main_web; // refers main_web.rs as a module
@@ -180,12 +181,12 @@ async fn console_menu_loop(server_handle: ServerHandle, runtime_info: Arc<Runtim
                 test_ibapi_realtime_bars().await;
             }
             "51" => {
-                let mut fast_runner = services::fast_runner::FastRunner::new();
+                let mut fast_runner = robotrader::fast_runner::FastRunner::new();
                 fast_runner.init();
                 fast_runner.test_http_download_pqp().await;
             }
             "52" => {
-                let mut fast_runner = services::fast_runner::FastRunner::new();
+                let mut fast_runner = robotrader::fast_runner::FastRunner::new();
                 fast_runner.init();
                 fast_runner.test_http_download_ap().await;
             }
