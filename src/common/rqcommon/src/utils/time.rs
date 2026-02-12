@@ -20,7 +20,7 @@ pub fn benchmark_elapsed_time(name: &str, f: impl FnOnce()) {
     let start = Instant::now();
     f();
     let elapsed_microsec = start.elapsed().as_secs_f64() * 1_000_000.0;
-    println!("Elapsed Time of {}: {:.2}us", name, elapsed_microsec); // TODO: no native support thousand separators in float or int. Use crate 'num-format' or 'thousands' or better: write a lightweight formatter train in RqCommon
+    log::info!("Elapsed Time of {}: {:.2}us", name, elapsed_microsec); // TODO: no native support thousand separators in float or int. Use crate 'num-format' or 'thousands' or better: write a lightweight formatter train in RqCommon
 }
 
 pub async fn benchmark_elapsed_time_async<F, Fut>(name: &str, f: F)
@@ -31,5 +31,5 @@ where
     let start = Instant::now();
     f().await;
     let elapsed_microsec = start.elapsed().as_secs_f64() * 1_000_000.0;
-    println!("Elapsed Time of {}: {:.2}us", name, elapsed_microsec);
+    log::info!("Elapsed Time of {}: {:.2}us", name, elapsed_microsec);
 }

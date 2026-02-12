@@ -57,7 +57,7 @@
       "cwd": "${workspaceFolder}/src/rqcoresrv",
       "args": [],
       "env": {
-        "RUST_LOG": "warn,rqcoresrv=info,ibapi=info"
+        "RUST_LOG": "warn,rqcoresrv=info,rqcommon=info,broker-common=info,ibapi=info"
       }
     },
     {

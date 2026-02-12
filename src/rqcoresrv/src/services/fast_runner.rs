@@ -2,7 +2,7 @@ use chrono::{Datelike, Local, Utc};
 use ibapi::{prelude::*};
 use serde::Deserialize;
 use std::{collections::HashMap, fs, path::{Path, PathBuf}, sync::{Arc}, time::{Instant, SystemTime}};
-use rqcommon::utils::time::{benchmark_elapsed_time, benchmark_elapsed_time_async};
+use rqcommon::{log_and_println, log_and_if_println, utils::time::{benchmark_elapsed_time, benchmark_elapsed_time_async}};
 use crate::RQ_BROKERS_WATCHER;
 
 #[derive(Debug, Deserialize)]
@@ -223,7 +223,7 @@ impl FastRunner {
             let content = fs::read_to_string(Self::COOKIES_FILE_PATH).expect("read_to_string() failed!");
             self.cookies = Some(content.trim().to_string());
             self.cookies_file_last_modtime = Some(file_modified_time);
-            println!("Cookies loaded/refreshed from file.");
+            log::info!("Cookies loaded/refreshed from file.");
         }
     }
 
@@ -239,8 +239,6 @@ impl FastRunner {
         // Check if today is the real_rebalance_date
         self.pqp_is_run_today = now_utc == pqp_real_rebalance_date;
         // self.pqp_is_run_today = true; // override for testing
-        println!("pqp_virtual_rebalance_date: {}, pqp_real_rebalance_date: {}, pqp_is_run_today: {}, ", pqp_virtual_rebalance_date, pqp_real_rebalance_date, self.pqp_is_run_today);
-
         let ap_virtual_rebalance_date = if now_utc.day() >= 15 { // virtual_rebalance_date as the 1st or 15th of month
             now_utc.with_day(15).unwrap()
         } else {
@@ -255,8 +253,6 @@ impl FastRunner {
         // Check if today is the real_rebalance_date
         self.ap_is_run_today = now_utc == ap_real_rebalance_date;
         // self.ap_is_run_today = true; // override for testing
-        println!("ap_virtual_rebalance_date: {}, ap_real_rebalance_date: {}, ap_is_run_today: {}, ", ap_virtual_rebalance_date, ap_real_rebalance_date, self.ap_is_run_today);
-
         // Determine PV Portfolio Values to play. If both PQP and AP run today, then we can split the PV between them. If only one of them runs, then we can allocate all PV to that one.
         if self.pqp_is_run_today && self.ap_is_run_today { // future target: 70K+70K+60K short =200K.
             self.pqp_buy_pv = 70000.0;
@@ -276,13 +272,13 @@ impl FastRunner {
             self.ap_buy_pv = 0.0;
         }
 
-        // print everything for debugging
-        println!("pqp_buy_pv: {}, pqp_sell_pv: {}, ap_buy_pv: {}", self.pqp_buy_pv, self.pqp_sell_pv, self.ap_buy_pv);
-
+        // print everything for debugging. When it matures, then just log::info() it.
+        log_and_println!("pqp_virtual_rebalance_date: {}, pqp_real_rebalance_date: {}, pqp_is_run_today: {}, ap_virtual_rebalance_date: {}, ap_real_rebalance_date: {}, ap_is_run_today: {}, pqp_buy_pv: {}, pqp_sell_pv: {}, ap_buy_pv: {}", 
+            pqp_virtual_rebalance_date, pqp_real_rebalance_date, self.pqp_is_run_today, ap_virtual_rebalance_date, ap_real_rebalance_date, self.ap_is_run_today, self.pqp_buy_pv, self.pqp_sell_pv, self.ap_buy_pv);
     }
 
     pub async fn get_new_buys_sells_pqp(&mut self) -> (String, Vec<TransactionEvent>, Vec<TransactionEvent>) {
-        println!(">* get_new_buys_sells_pqp() started.");
+        log_and_println!(">*{} get_new_buys_sells_pqp() started. target_date: {}", Utc::now().format("%H:%M:%S%.3f"), self.pqp_json_target_date_str);
 
         benchmark_elapsed_time("ensure_cookies_loaded()", || {  // 300us first, 70us later
             self.ensure_cookies_loaded(); // cookies are reloaded from file only if needed, if the file changed.
@@ -314,16 +310,13 @@ impl FastRunner {
         let datetime_str = Local::now().format("%Y%m%dT%H%M%S").to_string();
         let file_path: PathBuf = dir.join(format!("fast_run_pqp_src_{}.json", datetime_str));
         tokio::fs::write(&file_path, &body_text).await.expect("fs::write() failed!");
-        println!("Saved raw JSON to {}", file_path.display());
-
-        println!("pqp_json_target_date: {}", self.pqp_json_target_date_str);
 
         if body_text.len() < 1000 {
             if body_text.contains("Subscription is required") {
-                println!("!Error. No permission, Update cookie file."); // we don't have to terminate the infinite Loop. The admin can update the cookie file and the next iteration will notice it.
+                log::error!("!Error. No permission, Update cookie file."); // we don't have to terminate the infinite Loop. The admin can update the cookie file and the next iteration will notice it.
                 return (self.pqp_json_target_date_str.clone(), Vec::new(), Vec::new());
             } else if body_text.contains("captcha.js") {
-                println!("!Error. Captcha required, Update cookie file AND handle Captcha in browser."); // we don't have to terminate the infinite Loop. The admin can update the cookie file and the next iteration will notice it.
+                log::error!("!Error. Captcha required, Update cookie file AND handle Captcha in browser."); // we don't have to terminate the infinite Loop. The admin can update the cookie file and the next iteration will notice it.
                 return (self.pqp_json_target_date_str.clone(), Vec::new(), Vec::new());
             }
         }
@@ -343,10 +336,10 @@ impl FastRunner {
             stocks.insert(stock.id.clone(), stock);
         }
 
-        println!("Found {} transactions, {} stocks", transactions.len(), stocks.len());
+        log_and_if_println!(true, "Found {} transactions, {} stocks", transactions.len(), stocks.len());
         // Print first transaction example
         // if let Some(first_tx) = transactions.first() {
-        //     println!("First transaction: id={}, action={}, price={:?}, tickerId={}", 
+        //     log_and_println!("First transaction: id={}, action={}, price={:?}, tickerId={}", 
         //         first_tx.attributes.id, 
         //         first_tx.attributes.action, 
         //         first_tx.attributes.price,
@@ -358,7 +351,7 @@ impl FastRunner {
         // for transaction in &transactions {
         //     let ticker_id = &transaction.relationships.ticker.data.id;
         //     if let Some(stock) = stocks.get(ticker_id) {
-        //         println!(
+        //         log_and_println!(
         //             "Tr {}: {} {} {} weight of {} ({}) at ${}",
         //             transaction.attributes.id,
         //             transaction.attributes.actionDate,
@@ -423,17 +416,14 @@ impl FastRunner {
         let (target_action_date, new_buy_events, new_sell_events) = self.get_new_buys_sells_pqp().await;
 
         // Print summary
-        println!("On {}, new positions:", target_action_date);
-        print!("New BUYS ({}):", new_buy_events.len());
+        log_and_if_println!(true, "On {}, new positions. Buys:{}, Sells:{}", target_action_date, new_buy_events.len(), new_sell_events.len());
         for event in &new_buy_events {
-            print!("  {} ({}, ${}) , ", event.ticker, event.company_name, event.price.as_deref().unwrap_or("N/A"));
+            log_and_if_println!(true, "  BUY {} ({}, ${}) , ", event.ticker, event.company_name, event.price.as_deref().unwrap_or("N/A"));
         }
-        
-        print!("\nNew SELLS ({}):", new_sell_events.len());
         for event in &new_sell_events {
-            print!("  {} ({}, ${}) , ", event.ticker, event.company_name, event.price.as_deref().unwrap_or("N/A"));
+            log_and_if_println!(true, "  SELL {} ({}, ${}) , ", event.ticker, event.company_name, event.price.as_deref().unwrap_or("N/A"));
         }
-        println!(); // print newline for flushing the buffer. Otherwise the last line may not appear immediately.
+        // println!(); // print newline for flushing the buffer. Otherwise the last line may not appear immediately.
         // io::stdout().flush().unwrap();  // Ensure immediate output, because it is annoying to wait for newline or buffer full
     }
 
@@ -454,17 +444,17 @@ impl FastRunner {
 
         let num_new_events = new_buy_events.len() + new_sell_events.len();
         if num_new_events == 0 {
-            println!("No new buy/sell events on {}. Skipping trading.", target_action_date);
+            log_and_println!("No new buy/sell events on {}. Skipping trading.", target_action_date);
             return;
         }
         if num_new_events > 14 { // The most it was 7+7 = 14 trades in the past. And even if it is correct, if there are 8 buys and 8 sells, a lot of trading that I don't want. As in this spread out suggestion, the buying pressure is not that big.
-            println!("Something is wrong. Don't expect more than 14 events. num_new_events: {}. Skipping trading.", num_new_events);
+            log::warn!("Something is wrong. Don't expect more than 14 events. num_new_events: {}. Skipping trading.", num_new_events);
             return;
         }
 
         // If we are here, there are events to trade. Assure that we trade only once.
         if self.has_trading_ever_started { // Assure that Trading only happens once per FastRunner instance. To avoid trading it many times.
-            println!("Trading already started. Skipping this iteration.");
+            log::warn!("Trading already started. Skipping this iteration.");
             return;
         }
         self.has_trading_ever_started = true;
@@ -497,21 +487,18 @@ impl FastRunner {
         // 1. Comment out ib_client.order() (for both Buy/Sell) Just comment it back in when you want to trade.
         // 2. Another option to prevent trade:self.is_simulation bool is true by default.
         // 3.Another option to prevent trade: is in IbGateway settings, check in "ReadOnly API", that will prevent the trades.
-        println!("Loop: On {}, new positions:", target_action_date);
-        println!("Process New BUYS ({}):", new_buy_events.len());
+        log_and_println!("Loop: On {}, Process New BUYS ({}):", target_action_date, new_buy_events.len());
         for event in &new_buy_events {
-            println!("  {} ({}, ${}, ${}, event)", event.ticker, event.company_name, event.price.as_deref().unwrap_or("N/A"), event.pos_market_value);
+            log_and_println!("  {} ({}, price: ${}, target posValue: ${}, before get_price())", event.ticker, event.company_name, event.price.as_deref().unwrap_or("N/A"), event.pos_market_value);
             let contract = Contract::stock(&event.ticker).build(); // Contract is just a thin wrapper. For invalid tickers, the Contract 'seems' to be OK, sadly. Invalid ticker will only turn out when we use that Contract (e.g. getting real-time bar)
-            // print the contract details
-            println!("  Contract details: {:?}", contract); // TODO: inspect these to see if we can catch early if GMTLF is not supported by IB. "No security definition has been found for the request". In that case, don't try to get price that takes 500ms.
             let price = get_price(&ib_client_dcmain, event, &contract).await;
             if price.is_nan() { // If no price (e.g. no real-time market data for ADR, OTC), we cannot calculate nShares, not even MKT orders possible, we skip only this trade, but don't panic and do other trades
-                println!("  {} ({}, cannot determine price, skipping...)", event.ticker, event.company_name);
+                log_and_println!("  {} ({}, cannot determine price, skipping...)", event.ticker, event.company_name);
                 continue;
             }
 
             let num_shares = (event.pos_market_value / price).floor() as i32;
-            println!("  {} ({}, price: ${}, nShares: {}, order)", event.ticker, event.company_name, price, num_shares);
+            log_and_println!("  {} ({}, price: ${}, nShares: {}, before order())", event.ticker, event.company_name, price, num_shares);
 
             if self.is_simulation // prevent trade in simulation mode
                 { continue;}
@@ -534,21 +521,21 @@ impl FastRunner {
                 .submit()
                 .await
                 .expect("order submission failed!");
-            println!("Order submitted: OrderID: {}, Ticker: {}, Shares: {}", order_id, contract.symbol, num_shares);
+            log_and_println!("Order submitted: OrderID: {}, Ticker: {}, Shares: {}", order_id, contract.symbol, num_shares);
         }
         
-        println!("Process New SELLS ({}):", new_sell_events.len());
+        log_and_println!("Process New SELLS ({}):", new_sell_events.len());
         for event in &new_sell_events {
-            println!("  {} ({}, ${}, ${}, event)", event.ticker, event.company_name, event.price.as_deref().unwrap_or("N/A"), event.pos_market_value);
+            log_and_println!("  {} ({}, ${}, ${}, event)", event.ticker, event.company_name, event.price.as_deref().unwrap_or("N/A"), event.pos_market_value);
             let contract = Contract::stock(&event.ticker).build();
             let price = get_price(&ib_client_dcmain, event, &contract).await;
             if price.is_nan() { // If no price (e.g. no real-time market data for ADR, OTC), we cannot calculate nShares, not even MKT orders possible, we skip only this trade, but don't panic and do other trades
-                println!("  {} ({}, cannot determine price, skipping...)", event.ticker, event.company_name);
+                log_and_println!("  {} ({}, cannot determine price, skipping...)", event.ticker, event.company_name);
                 continue;
             }
 
             let num_shares = (event.pos_market_value / price).floor() as i32;
-            println!("  {} ({}, price: ${}, nShares: {}, order)", event.ticker, event.company_name, price, num_shares);
+            log_and_println!("  {} ({}, price: ${}, nShares: {}, order)", event.ticker, event.company_name, price, num_shares);
 
             if self.is_simulation // prevent trade in simulation mode
                 { continue;}
@@ -560,15 +547,13 @@ impl FastRunner {
                 .submit()
                 .await
                 .expect("order submission failed!");
-            println!("Order submitted: OrderID: {}, Ticker: {}, Shares: {}", order_id, contract.symbol, num_shares);
+            log_and_println!("Order submitted: OrderID: {}, Ticker: {}, Shares: {}", order_id, contract.symbol, num_shares);
         }
-        println!(); // print newline for flushing the buffer. Otherwise the last line may not appear immediately.
-        // io::stdout().flush().unwrap();  // Ensure immediate output, because it is annoying to wait for newline or buffer full
     }
 
 
     pub async fn get_new_buys_sells_ap(&mut self) -> (String, Vec<TransactionEvent>) {
-        println!(">* get_new_buys_sells_ap() started.");
+        log_and_println!(">*{} get_new_buys_sells_ap() started. target_date: {}", Utc::now().format("%H:%M:%S%.3f"), self.ap_json_target_date_str);
 
         benchmark_elapsed_time("ensure_cookies_loaded()", || {  // 300us first, 70us later
             self.ensure_cookies_loaded(); // cookies are reloaded from file only if needed, if the file changed.
@@ -600,15 +585,12 @@ impl FastRunner {
         let datetime_str = Local::now().format("%Y%m%dT%H%M%S").to_string();
         let file_path: PathBuf = dir.join(format!("fast_run_ap_src_{}.json", datetime_str));
         tokio::fs::write(&file_path, &body_text).await.expect("fs::write() failed!");
-        println!("Saved raw JSON to {}", file_path.display());
-
-        println!("ap_json_target_date: {}", self.ap_json_target_date_str);
 
         if !body_text.contains("\"isPaywalled\":false") { // Search ""isPaywalled":false". If it can be found, then it is good. Otherwise, we get the articles, but the primaryTickers will be empty.
-            println!("!Error. No permission, Update cookie file."); // we don't have to terminate the infinite Loop. The admin can update the cookie file and the next iteration will notice it.
+            log::error!("!Error. No permission, Update cookie file."); // we don't have to terminate the infinite Loop. The admin can update the cookie file and the next iteration will notice it.
             return (self.ap_json_target_date_str.clone(), Vec::new());
         } else if body_text.contains("captcha.js") {
-            println!("!Error. Captcha required, Update cookie file AND handle Captcha in browser."); // we don't have to terminate the infinite Loop. The admin can update the cookie file and the next iteration will notice it.
+            log::error!("!Error. Captcha required, Update cookie file AND handle Captcha in browser."); // we don't have to terminate the infinite Loop. The admin can update the cookie file and the next iteration will notice it.
             return (self.ap_json_target_date_str.clone(), Vec::new());
         }
 
@@ -692,13 +674,10 @@ impl FastRunner {
         let (target_action_date, new_buy_events) = self.get_new_buys_sells_ap().await;
 
         // Print summary
-        println!("On {}, new positions:", target_action_date);
-        print!("New BUYS ({}):", new_buy_events.len());
+        log_and_println!("On {}, New BUYS ({})::", target_action_date, new_buy_events.len());
         for event in &new_buy_events {
-            print!("  {} ({}, ${}) , ", event.ticker, event.company_name, event.price.as_deref().unwrap_or("N/A"));
+            log_and_println!("  BUY {} ({}, ${}) , ", event.ticker, event.company_name, event.price.as_deref().unwrap_or("N/A"));
         }
-        println!(); // print newline for flushing the buffer. Otherwise the last line may not appear immediately.
-        // io::stdout().flush().unwrap();  // Ensure immediate output, because it is annoying to wait for newline or buffer full
     }
 
     fn determine_position_market_values_ap_gyantal(&self, new_buy_events: &mut Vec<TransactionEvent>) {
@@ -708,24 +687,23 @@ impl FastRunner {
         }
     }
 
-    
     pub async fn fastrunning_loop_ap_impl(&mut self) {
 
         let (target_action_date, mut new_buy_events) = self.get_new_buys_sells_ap().await;
 
         let num_new_events = new_buy_events.len();
         if num_new_events == 0 {
-            println!("No new buy/sell events on {}. Skipping trading.", target_action_date);
+            log_and_println!("No new buy/sell events on {}. Skipping trading.", target_action_date);
             return;
         }
         if num_new_events > 2 { // There should be 1 new buy per rebalance.
-            println!("Something is wrong. Don't expect more than 1-2 events. num_new_events: {}. Skipping trading.", num_new_events);
+            log::warn!("Something is wrong. Don't expect more than 1-2 events. num_new_events: {}. Skipping trading.", num_new_events);
             return;
         }
 
         // If we are here, there are events to trade. Assure that we trade only once.
         if self.has_trading_ever_started { // Assure that Trading only happens once per FastRunner instance. To avoid trading it many times.
-            println!("Trading already started. Skipping this iteration.");
+            log::warn!("Trading already started. Skipping this iteration.");
             return;
         }
         self.has_trading_ever_started = true;
@@ -758,19 +736,18 @@ impl FastRunner {
         // 1. Comment out ib_client.order() (for both Buy/Sell) Just comment it back in when you want to trade.
         // 2. Another option to prevent trade:self.is_simulation bool is true by default.
         // 3.Another option to prevent trade: is in IbGateway settings, check in "ReadOnly API", that will prevent the trades.
-        println!("Loop: On {}, new positions:", target_action_date);
-        println!("Process New BUYS ({}):", new_buy_events.len());
+        log_and_println!("Loop: On {}, Process New BUYS ({}):", target_action_date, new_buy_events.len());
         for event in &new_buy_events {
-            println!("  {} ({}, ${}, ${}, event)", event.ticker, event.company_name, event.price.as_deref().unwrap_or("N/A"), event.pos_market_value);
+            log_and_println!("  {} ({}, price: ${}, target posValue: ${}, before get_price())", event.ticker, event.company_name, event.price.as_deref().unwrap_or("N/A"), event.pos_market_value);
             let contract = Contract::stock(&event.ticker).build();
             let price = get_price(&ib_client_dcmain, event, &contract).await;
             if price.is_nan() { // If no price (e.g. no real-time market data for ADR, OTC), we cannot calculate nShares, not even MKT orders possible, we skip only this trade, but don't panic and do other trades
-                println!("  {} ({}, cannot determine price, skipping...)", event.ticker, event.company_name);
+                log_and_println!("  {} ({}, cannot determine price, skipping...)", event.ticker, event.company_name);
                 continue;
             }
 
             let num_shares = (event.pos_market_value / price).floor() as i32;
-            println!("  {} ({}, price: ${}, nShares: {}, order)", event.ticker, event.company_name, price, num_shares);
+            log_and_println!("  {} ({}, price: ${}, nShares: {}, before order())", event.ticker, event.company_name, price, num_shares);
 
             if self.is_simulation // prevent trade in simulation mode
                 { continue;}
@@ -781,10 +758,8 @@ impl FastRunner {
                 .submit()
                 .await
                 .expect("order submission failed!");
-            println!("Order submitted: OrderID: {}, Ticker: {}, Shares: {}", order_id, contract.symbol, num_shares);
+            log_and_println!("Order submitted: OrderID: {}, Ticker: {}, Shares: {}", order_id, contract.symbol, num_shares);
         }
-        println!(); // print newline for flushing the buffer. Otherwise the last line may not appear immediately.
-        // io::stdout().flush().unwrap();  // Ensure immediate output, because it is annoying to wait for newline or buffer full
     }
 
 }
@@ -807,11 +782,11 @@ async fn get_price(ib_client_dcmain: &Arc<Client>, event: &TransactionEvent, con
             .realtime_bars(contract, RealtimeBarSize::Sec5, RealtimeWhatToShow::Trades, TradingHours::Regular).await
             .expect("realtime bars request failed!");
 
-        println!("  {} ({}, waiting for real-time bar...) , ", event.ticker, event.company_name);
+        log_and_println!("  {} ({}, waiting for real-time bar...) , ", event.ticker, event.company_name);
         while let Some(bar_result) = subscription.next().await {
             match bar_result {
                 Ok(bar) => { 
-                    println!("{bar:?}"); 
+                    log_and_println!("  {bar:?}"); 
                     price = bar.close; 
                 },
                 // Error is raised here if we don't have realtime market data for that stock. In that case, price stays as NaN and we skip that single trade, but continue with other trades.
@@ -820,10 +795,10 @@ async fn get_price(ib_client_dcmain: &Arc<Client>, event: &TransactionEvent, con
                 // 2026-02-09: NTOIY: "Invalid Real-time Query:No market data permissions for ARCAEDGE STK", "invalid float literal"
                 //      The reason is that Pink Stock. In TWS, I have ask-bid prices, but no 5sec bar chart. Empty 5sec chart. There is 1min chart.
                 //      IB also warns that This stock has limited liquidatidy. So, actually it is better that I cannot trade this.
-                Err(e) => eprintln!("Error in realtime_bars subscription: {e:?}"),
+                Err(e) => log::error!("Error in realtime_bars subscription: {e:?}"),
             }
             let elapsed_microsec = start.elapsed().as_secs_f64() * 1_000_000.0;
-            println!("Elapsed Time of ib_client.realtime_bars(): {:.2}us", elapsed_microsec); // about 430-550ms first bar, then subsequent bars every 5s
+            log_and_println!("  Elapsed Time of ib_client.realtime_bars(): {:.2}us", elapsed_microsec); // about 430-550ms first bar, then subsequent bars every 5s
             break; // just 1 bar for testing, otherwise it would block here forever
         }
     }

@@ -5,7 +5,7 @@ use {
     chrono_tz::US::Eastern,
 };
 
-use rqcommon::utils::time::localtimeonly2future_datetime_tz;
+use rqcommon::{log_and_println, utils::time::localtimeonly2future_datetime_tz};
 
 use crate::services::fast_runner::FastRunner;
 
@@ -51,7 +51,7 @@ impl RqTask for HeartbeatTask {
 
     fn run(&self) -> Pin<Box<dyn Future<Output = ()> + Send + '_>> {
         Box::pin(async move {
-            println!("HeartbeatTask run has started");
+            log::info!("HeartbeatTask run has started");
         })
     }
 }
@@ -106,7 +106,7 @@ impl RqTask for FastRunnerPqpTask {
     fn run(&self) -> Pin<Box<dyn Future<Output = ()> + Send + '_>> {
         // let this = self;
         Box::pin(async move {
-             println!("{} FastRunnerPqpTask run() started", Utc::now().format("%H:%M:%S%.3f"));
+             log_and_println!("{} FastRunnerPqpTask run() started", Utc::now().format("%H:%M:%S%.3f"));
 
             let mut fast_runner = FastRunner::new();
             fast_runner.init();
@@ -125,14 +125,13 @@ impl RqTask for FastRunnerPqpTask {
             }
 
             if !fast_runner.pqp_is_run_today {
-                println!("Today is not the scheduled day for FastRunnerPqpTask");
+                log_and_println!("Today is not the scheduled day for FastRunnerPqpTask");
                 return;
             }
 
             let loop_endtime = tokio::time::Instant::now()
                 + if fast_runner.is_simulation { tokio::time::Duration::from_secs(30)}
                     else { tokio::time::Duration::from_secs(4 * 60 + 30) }; // 2025-12-01: AP/Analysis tab published at 12:01:15 ET (late), the AP history was published 30 seconds earlier
-            
 
             // >Example running time at trading:
             // 17:00:02.952 FastRunnerPqpTask run(): Loop iteration (IsSimu:false)
@@ -141,12 +140,12 @@ impl RqTask for FastRunnerPqpTask {
             // it was 2 trades sent. It took 3.5 seconds (including downloading the page (2sec), getting the 2 prices, sending the order)
             // as 2sec was the download URL time, RqCore handles it in 1.5sec with 2 price query and 2 order. So, about 500ms per stock.
             while tokio::time::Instant::now() < loop_endtime { // if the loop runs more than 4 minutes 30 seconds, then finish the loop
-                println!(">*{} FastRunnerPqpTask run(): Loop iteration (IsSimu:{})", Utc::now().format("%H:%M:%S%.3f"), fast_runner.is_simulation);
+                log_and_println!(">*{} FastRunnerPqpTask run(): Loop iteration (IsSimu:{})", Utc::now().format("%H:%M:%S%.3f"), fast_runner.is_simulation);
 
                 fast_runner.fastrunning_loop_pqp_impl().await;
 
                 if fast_runner.has_trading_ever_started {
-                    println!("FastRunnerPqpTask: Trading has started, exiting the loop.");
+                    log_and_println!("FastRunnerPqpTask: Trading has started, exiting the loop.");
                     break;
                 }
 
@@ -155,7 +154,7 @@ impl RqTask for FastRunnerPqpTask {
                     tokio::time::sleep(tokio::time::Duration::from_millis(sleep_ms.into())).await;
                 }
             }
-            println!("{} FastRunnerPqpTask run() ended", Utc::now().format("%H:%M:%S%.3f"));
+            log_and_println!("{} FastRunnerPqpTask run() ended", Utc::now().format("%H:%M:%S%.3f"));
         })
     }
 }
@@ -211,7 +210,7 @@ impl RqTask for FastRunnerApTask {
     fn run(&self) -> Pin<Box<dyn Future<Output = ()> + Send + '_>> {
         // let this = self;
         Box::pin(async move {
-            println!("{} FastRunnerApTask run() started", Utc::now().format("%H:%M:%S%.3f"));
+            log_and_println!("{} FastRunnerApTask run() started", Utc::now().format("%H:%M:%S%.3f"));
 
             let mut fast_runner = FastRunner::new();
             fast_runner.init();
@@ -230,21 +229,21 @@ impl RqTask for FastRunnerApTask {
             }
 
             if !fast_runner.ap_is_run_today {
-                println!("Today is not the scheduled day for FastRunnerApTask");
+                log_and_println!("Today is not the scheduled day for FastRunnerApTask");
                 return;
             }
 
             let loop_endtime = tokio::time::Instant::now()
                 + if fast_runner.is_simulation { tokio::time::Duration::from_secs(30)}
                     else { tokio::time::Duration::from_secs(4 * 60 + 30) }; // 2025-12-01: AP/Analysis tab published at 12:01:15 ET (late), the AP history was published 30 seconds earlier
-            println!("FastRunnerApTask run() starts the loop");
+
             while tokio::time::Instant::now() < loop_endtime { // if the loop runs more than 4 minutes 30 seconds, then finish the loop
-                println!(">*{} FastRunnerApTask run(): Loop iteration (IsSimu:{})", Utc::now().format("%H:%M:%S%.3f"), fast_runner.is_simulation);
+                log_and_println!(">*{} FastRunnerApTask run(): Loop iteration (IsSimu:{})", Utc::now().format("%H:%M:%S%.3f"), fast_runner.is_simulation);
 
                 fast_runner.fastrunning_loop_ap_impl().await;
 
                 if fast_runner.has_trading_ever_started {
-                    println!("FastRunnerApTask: Trading has started, exiting the loop.");
+                    log_and_println!("FastRunnerApTask: Trading has started, exiting the loop.");
                     break;
                 }
 
@@ -253,7 +252,7 @@ impl RqTask for FastRunnerApTask {
                     tokio::time::sleep(tokio::time::Duration::from_millis(sleep_ms.into())).await;
                 }
             }
-            println!("{} FastRunnerApTask run() ended", Utc::now().format("%H:%M:%S%.3f"));
+            log_and_println!("{} FastRunnerApTask run() ended", Utc::now().format("%H:%M:%S%.3f"));
         })
     }
 }
