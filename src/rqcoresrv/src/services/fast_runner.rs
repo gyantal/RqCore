@@ -515,6 +515,14 @@ impl FastRunner {
 
             if self.is_simulation // prevent trade in simulation mode
                 { continue;}
+
+            // IBKR enforces a 50 requests/second limit. The default behaviour is that IbGateway to apply pacingdelays to requests that exceed the limit, which is OK.
+            // In IbGateway API options, we can force it to "Reject messages above the maximum allowed message rate vs. applying pacing". But this is off.
+            // If it was a reject, then we should call `rate_limit()` before each API request to stay under the limit. 
+            // Uses a token bucket — the first 50 requests pass instantly, then requests are spaced to maintain the average.
+            // There is a rate_limit() in ibapi_test that we can use. But since we have only max 14 trades, and each trade has 1-2 API calls, we are far from the limit.
+            // Also, that implementation is global. With a static RATE_LIMITER. We will have to implement it per Connection (if ever needed)
+            // ibapi_test::rate_limit(); // not necessary to use, as IbGateway will automatically pace the requests that exceed the limit.
             let order_id = ib_client_gyantal.order(&contract)
                 .buy(num_shares)
                 // .market()
