@@ -56,8 +56,8 @@
       },
       "cwd": "${workspaceFolder}/src/rqcoresrv",
       "args": [],
-      "env": {
-        "RUST_LOG": "warn,rqcoresrv=info,rqcommon=info,broker-common=info,ibapi=info"
+      "env": { // RUST_LOG: use the namespace (ibapi, broker_common), not the name of the crate from cargo.toml(ib-api, broker-common).
+        "RUST_LOG": "warn,rqcoresrv=info,rqcommon=info,broker_common=info,ibapi=info"
       }
     },
     {

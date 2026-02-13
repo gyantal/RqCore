@@ -88,7 +88,15 @@ pub async fn login(request: HttpRequest, id: Option<Identity>, query: Query<Hash
     let state = percent_encode(return_url.as_bytes(), NON_ALPHANUMERIC).to_string();
     let auth_url = format!("https://accounts.google.com/o/oauth2/v2/auth?client_id={}&redirect_uri={}&response_type=code&scope={}&access_type=offline&prompt=consent&state={}", google_client_id, redirect_uri, scope, state);
 
+    // After the 'login' or 'logout' http call is processed by the server, the Response header "location: /" will redirect the browser.
+    // This 'login' or 'logout' call is the place when we can inject to ask the browser for cache busting for the whole domain: 
+    // At login: Clear-Site-Data: "cache". // but we can keep the cookies and storage, because the user is still the same, just logging in. This will ensure that the browser fetches fresh data for the logged-in user, instead of using potentially stale cached data from before login.
+    // At logout: Clear-Site-Data: "cache", "cookies", "storage"
+    // This tells the browser to remove specific types of stored data associated with the website's origin (e.g., the domain like example.com and its subdomains).
+    // HTTPS only. Secure contexts required: Won't work over plain HTTP.
+    // This is only needed very rarely, when the user logouts or logs in again (maybe with a different user).
     HttpResponse::Found()
+        .append_header((header::CLEAR_SITE_DATA, "\"cache\""))
         .append_header(("Location", auth_url))
         .finish()
 }
@@ -185,7 +193,10 @@ pub async fn logout(id: Option<Identity>, session: Session) -> impl Responder {
     if let Some(id) = id { id.logout(); }
     session.clear();
 
-    HttpResponse::Found().append_header((header::LOCATION, "/")).finish()
+    HttpResponse::Found()
+        .append_header((header::CLEAR_SITE_DATA, "\"cache\", \"cookies\", \"storage\""))
+        .append_header((header::LOCATION, "/"))
+        .finish()
 }
 
 #[get("/useraccount/userinfo")]

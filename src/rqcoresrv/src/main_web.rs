@@ -56,18 +56,18 @@ async fn browser_cache_control_30_days_middleware<B>(
 where
     B: MessageBody + 'static,
 {
-    let path = req.path().to_string();
+    // If needed in the future for website version updates, 'all domain' server-side browser-cache-busting can be done with Response header Clear-Site-Data: "cache" (HTTPS only)
+
+    // let path = req.path().to_string();
     let mut res = next.call(req).await?;
 
-    let dynamic_cache = HeaderValue::from_static("no-store, no-cache, must-revalidate, max-age=0"); // For HTML / user-dependent responses (login state, session data, templated values) → never cache.
-    let static_cache = HeaderValue::from_static("public, max-age=2592000"); // For static assets (js, css, images, fonts, etc.) → cache for 30 days.
-
-    if path == "/" || matches!(path.as_str(), "/useraccount/login" | "/useraccount/logout")
-    {
-        res.headers_mut().insert(CACHE_CONTROL, dynamic_cache);
-    } else {
-        res.headers_mut().insert(CACHE_CONTROL, static_cache);
-    }
+    // if path == "/" || matches!(path.as_str(), "/useraccount/login" | "/useraccount/logout")
+    // {
+    //     res.headers_mut().insert(CACHE_CONTROL, HeaderValue::from_static("no-store, no-cache, must-revalidate, max-age=0"));
+    // } else {
+    //     res.headers_mut().insert(CACHE_CONTROL, HeaderValue::from_static("public, max-age=2592000"));
+    // }
+    res.headers_mut().insert(CACHE_CONTROL, HeaderValue::from_static("public, max-age=2592000")); // 2592000 = 30 days in seconds
     Ok(res)
 }
 
