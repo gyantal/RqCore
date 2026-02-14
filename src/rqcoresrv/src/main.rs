@@ -8,6 +8,7 @@ use actix_web::dev::ServerHandle;
 use ibapi::{prelude::*, market_data::historical::WhatToShow};
 
 use rqcommon::utils::runningenv::{load_rqcore_config, RqCoreConfig}; // no need of mod rqcommon, broker-common as that is in Cargo.toml as a dependency.
+use rqcommon::utils::rqemail::{RqEmail};
 use broker_common::brokers_watcher::RQ_BROKERS_WATCHER;
 
 // All compile target *.rs files in all folders should be mentioned as modules somehow.
@@ -158,6 +159,23 @@ async fn console_menu_loop(server_handle: ServerHandle, runtime_info: Arc<Runtim
         match line.trim() {
             "1" => {
                 println!("Hello. I am not crashed yet! :)");
+                let rqcore_cfg = get_rqcore_config();
+                let sender_email: String = match rqcore_cfg.get("email_hqserver") {
+                    Some(value) => value.to_string(),
+                    None => {
+                        log::error!("email_hqserver not found in config");
+                        return;
+                    }
+                };
+                let sender_password: String = match rqcore_cfg.get("email_hqserver_pwd") {
+                    Some(value) => value.to_string(),
+                    None => {
+                        log::error!("email_hqserver_pwd not found in config");
+                        return;
+                    }
+                };
+                let rqemail: RqEmail = RqEmail::init(&sender_email, &sender_password);
+                rqemail.send_html("dayakar.kodirekka@gmail.com", "RqEmail Test", "<h1>Hello</h1>");
             }
             "2" => {
                 print_runtime_info(&runtime_info);
