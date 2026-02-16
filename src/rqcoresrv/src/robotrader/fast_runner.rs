@@ -1,6 +1,6 @@
 use chrono::{Datelike, Local, Utc};
 use serde::Deserialize;
-use std::{collections::HashMap, fs, path::{Path, PathBuf}, time::{SystemTime}};
+use std::{fmt::Write, collections::HashMap, fs, path::{Path, PathBuf}, time::{SystemTime}};
 use rqcommon::{log_and_println, log_and_if_println, utils::time::{benchmark_elapsed_time, benchmark_elapsed_time_async}};
 
 use broker_common::brokers_watcher::{RqOrder, RqOrderType};
@@ -174,6 +174,8 @@ pub struct FastRunner {
     pub pqp_buy_pv: f64, // PQP PV for buys
     pub pqp_sell_pv: f64, // PQP PV for sells
     pub ap_buy_pv: f64, // AP PV for buys
+
+    pub user_log: String, // accumulate summary of what we did in this FastRunner instance, and send it as email body in the end.
 }
 
 impl FastRunner {
@@ -201,6 +203,8 @@ impl FastRunner {
             pqp_buy_pv: 50000.0, // PQP PV for buys
             pqp_sell_pv: 30000.0, // PQP PV for sells
             ap_buy_pv: 50000.0, // AP PV for buys
+
+            user_log: String::with_capacity(2048),  // Pre-allocate ~2KB for this StringBuilder.
         }
     }
 
@@ -276,7 +280,10 @@ impl FastRunner {
         // print everything for debugging. When it matures, then just log::info() it.
         log_and_println!("pqp_virtual_rebalance_date: {}, pqp_real_rebalance_date: {}, pqp_is_run_today: {}, ap_virtual_rebalance_date: {}, ap_real_rebalance_date: {}, ap_is_run_today: {}, pqp_buy_pv: {}, pqp_sell_pv: {}, ap_buy_pv: {}", 
             pqp_virtual_rebalance_date, pqp_real_rebalance_date, self.pqp_is_run_today, ap_virtual_rebalance_date, ap_real_rebalance_date, self.ap_is_run_today, self.pqp_buy_pv, self.pqp_sell_pv, self.ap_buy_pv);
-    }
+        writeln!(self.user_log, "pqp_virtual_rebalance_date: {}, pqp_real_rebalance_date: {}, pqp_is_run_today: {}, ap_virtual_rebalance_date: {}, ap_real_rebalance_date: {}, ap_is_run_today: {}, pqp_buy_pv: {}, pqp_sell_pv: {}, ap_buy_pv: {}", 
+            pqp_virtual_rebalance_date, pqp_real_rebalance_date, self.pqp_is_run_today, ap_virtual_rebalance_date, ap_real_rebalance_date, self.ap_is_run_today, self.pqp_buy_pv, self.pqp_sell_pv, self.ap_buy_pv).unwrap(); // write!() macro never panics for a String (infallible), so unwrap() is safe
+
+        }
 
     pub async fn get_new_buys_sells_pqp(&mut self) -> (String, Vec<TransactionEvent>, Vec<TransactionEvent>) {
         log_and_println!(">*{} get_new_buys_sells_pqp() started. target_date: {}", Utc::now().format("%H:%M:%S%.3f"), self.pqp_json_target_date_str);
@@ -338,6 +345,8 @@ impl FastRunner {
         }
 
         log_and_if_println!(true, "Found {} transactions, {} stocks", transactions.len(), stocks.len());
+        writeln!(self.user_log, "Found {} transactions, {} stocks", transactions.len(), stocks.len()).unwrap(); // write!() macro never panics for a String (infallible), so unwrap() is safe
+
         // Print all transactions
         // for transaction in &transactions {
         //     let ticker_id = &transaction.relationships.ticker.data.id;

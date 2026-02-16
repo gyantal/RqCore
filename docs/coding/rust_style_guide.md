@@ -131,9 +131,38 @@ SERVER_APP_START_TIME.set(Utc::now()).ok();
 }
 ```
 
-## String (&str) concat
+## String, &str, concat
 
-Fastest/lowest-overhead for two &str is: one allocation, two appends.
+Rust's String type is the direct equivalent to C#'s StringBuilder. It provides a mutable, growable buffer for efficiently building strings through methods like push, push_str, and extend, avoiding the performance overhead of repeated immutable string concatenations. In contrast, Rust's &str (string slice) is more akin to C#'s immutable string (or like the stringBuilder.ToString() method).
+
+Like C# StringBuilder, String in Rust is heap-allocated and can dynamically resize as content is appended. It uses UTF-8 encoding internally.
+Appending to a String is amortized O(1) time, similar to StringBuilder.Append(), because it pre-allocates extra capacity and doubles it when needed.
+Once built, you can convert a String to an immutable &str view with .as_str() for read-only access, much like calling ToString() on a StringBuilder.
+```rust
+let mut my_string = String::new();  // Equivalent to new StringBuilder(); initializes to 0 size.
+
+my_string.push_str("Hello, ");      // Append a string slice
+my_string.push('w');                // Append a single char
+my_string.push_str("orld!");
+
+// Or use format! for interpolated appending
+let age = 30;
+my_string.push_str(&format!(" I am {} years old.", age)); // but note: format! always allocates a new String; not efficient.
+
+writeln!(my_string, " I am {} years old.", age); // writeln! macro writes directly into the target String. 0 new String allocation.
+
+// From an iterator (efficient collection)
+let parts = vec![" This", " is", " efficient."];
+my_string.extend(&parts);
+
+// The next will collapse the String (StringBuilder) like a sb.ToString()
+println!("{}", my_string);  // Output: "Hello, world! I am 30 years old. This is efficient."
+
+// Convert to immutable &str if needed
+let immutable_str: &str = my_string.as_str();
+```
+
+Concatenation: Fastest/lowest-overhead for two &str is: one allocation, two appends.
 ```rust
 let mut result = String::with_capacity(str1.len() + str2.len());
 result.push_str(str1);

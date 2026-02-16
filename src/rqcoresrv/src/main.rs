@@ -7,8 +7,7 @@ use chrono::{Local, Utc, DateTime};
 use actix_web::dev::ServerHandle;
 use ibapi::{prelude::*, market_data::historical::WhatToShow};
 
-use rqcommon::utils::runningenv::{load_rqcore_config, RqCoreConfig}; // no need of mod rqcommon, broker-common as that is in Cargo.toml as a dependency.
-use rqcommon::utils::rqemail::{RqEmail};
+use rqcommon::{rqerror::RqError, utils::{rqemail::{RqEmail}, runningenv::{load_rqcore_config, RqCoreConfig}}}; // no need of mod rqcommon, broker-common as that is in Cargo.toml as a dependency.
 use broker_common::brokers_watcher::RQ_BROKERS_WATCHER;
 
 // All compile target *.rs files in all folders should be mentioned as modules somehow.
@@ -122,6 +121,25 @@ fn init_log() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+fn init_rqemail(rqcore_cfg: &'static RqCoreConfig) -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>> {
+    let sender_email: String = match rqcore_cfg.get("email_hqserver") {
+        Some(value) => value.to_string(),
+        None => {
+            log::error!("email_hqserver not found in config");
+            return Err(RqError::Config("email_hqserver not found in config".to_string()).into());
+        }
+    };
+    let sender_password: String = match rqcore_cfg.get("email_hqserver_pwd") {
+        Some(value) => value.to_string(),
+        None => {
+            log::error!("email_hqserver_pwd not found in config");
+            return Err(RqError::Config("email_hqserver_pwd not found in config".to_string()).into());
+        }
+    };
+    RqEmail::init(&sender_email, &sender_password);
+    Ok(())
+}
+
 async fn console_menu_loop(server_handle: ServerHandle, runtime_info: Arc<RuntimeInfo>) {
     let stdin = io::stdin();
     let mut lines = io::BufReader::new(stdin).lines();
@@ -159,23 +177,11 @@ async fn console_menu_loop(server_handle: ServerHandle, runtime_info: Arc<Runtim
         match line.trim() {
             "1" => {
                 println!("Hello. I am not crashed yet! :)");
-                let rqcore_cfg = get_rqcore_config();
-                let sender_email: String = match rqcore_cfg.get("email_hqserver") {
-                    Some(value) => value.to_string(),
-                    None => {
-                        log::error!("email_hqserver not found in config");
-                        return;
-                    }
+
+                if let Some(email_to_address) = get_rqcore_config().get("email_gyant") {
+                    RqEmail::send_html(email_to_address, "RqEmail Test", "<h1>Hello from rqcore_cfg</h1>");
                 };
-                let sender_password: String = match rqcore_cfg.get("email_hqserver_pwd") {
-                    Some(value) => value.to_string(),
-                    None => {
-                        log::error!("email_hqserver_pwd not found in config");
-                        return;
-                    }
-                };
-                let rqemail: RqEmail = RqEmail::init(&sender_email, &sender_password);
-                rqemail.send_html("dayakar.kodirekka@gmail.com", "RqEmail Test", "<h1>Hello</h1>");
+
             }
             "2" => {
                 print_runtime_info(&runtime_info);
@@ -332,7 +338,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>
     
     spdlog::info!("***Starting RqCoreSrv...");  // spdlog::info!() goes through, even though RUST_LOG is not set (because that controls the log::info!())
     // Initialize the global variable RqCoreConfig now (only once), before parallel threads start to use it.
-    spdlog::info!("RqCore config loaded: {} entries", get_rqcore_config().len());
+    let rqcore_cfg = get_rqcore_config();
+    spdlog::info!("RqCore config loaded: {} entries", rqcore_cfg.len());
+
+    init_rqemail(rqcore_cfg)?;
 
     RQ_BROKERS_WATCHER.init().await;
 

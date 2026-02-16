@@ -5,9 +5,9 @@ use {
     chrono_tz::US::Eastern,
 };
 
-use rqcommon::{log_and_println, utils::time::localtimeonly2future_datetime_tz};
+use rqcommon::{log_and_println, utils::{rqemail::RqEmail, time::localtimeonly2future_datetime_tz}};
 
-use crate::robotrader::fast_runner::FastRunner;
+use crate::{get_rqcore_config, robotrader::fast_runner::FastRunner};
 
 // ---------- Global static variables ----------
 pub static RQ_TASK_SCHEDULER: LazyLock<RqTaskScheduler> = LazyLock::new(|| RqTaskScheduler::new());
@@ -155,6 +155,9 @@ impl RqTask for FastRunnerPqpTask {
                 }
             }
             log_and_println!("{} FastRunnerPqpTask run() ended", Utc::now().format("%H:%M:%S%.3f"));
+            if let Some(email_to_address) = get_rqcore_config().get("email_gyant") {
+                RqEmail::send_text(email_to_address, "RqCore: FastRunnerPqpTask run() ended", fast_runner.user_log.as_str());
+            }
         })
     }
 }
@@ -253,6 +256,9 @@ impl RqTask for FastRunnerApTask {
                 }
             }
             log_and_println!("{} FastRunnerApTask run() ended", Utc::now().format("%H:%M:%S%.3f"));
+            if let Some(email_to_address) = get_rqcore_config().get("email_gyant") {
+                RqEmail::send_text(email_to_address, "RqCore: FastRunnerApTask run() ended", fast_runner.user_log.as_str());
+            }
         })
     }
 }
