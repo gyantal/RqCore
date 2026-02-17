@@ -1,7 +1,7 @@
 use chrono::{Datelike, Local, Utc};
 use serde::Deserialize;
 use std::{fmt::Write, collections::HashMap, fs, path::{Path, PathBuf}, time::{SystemTime}};
-use rqcommon::{log_and_println, log_and_if_println, utils::time::{benchmark_elapsed_time, benchmark_elapsed_time_async}};
+use rqcommon::{log_and_println, log_and_if_println, utils::time::{benchmark_elapsed_time_async}};
 
 use broker_common::brokers_watcher::{RqOrder, RqOrderType};
 use crate::robotrader::robo_trader::RoboTrader;
@@ -213,6 +213,11 @@ impl FastRunner {
     }
 
     const COOKIES_FILE_PATH: &'static str = "../../../rqcore_data/fast_run_1_headers.txt";
+    // Elapsed Time of ensure_cookies_loaded(): 
+    // first file read: 13,643us, 
+    // full reread the same file: 700us,  
+    // if checking only file_modified_time: 130us, 
+    // if checking only m_is_cookies_surely_working and returning: 0.40us
     fn ensure_cookies_loaded(&mut self) {
         if self.m_is_cookies_surely_working { // skip 130us file operation, checking the file_modified_time if we are sure that cookies are working
             return;
@@ -236,7 +241,7 @@ impl FastRunner {
         let now_utc = Utc::now().date_naive();
 
         let pqp_days_to_subtract = now_utc.weekday().days_since(chrono::Weekday::Mon) as i64; // equivalent to num_days_from_monday(). From Last Monday. If today is Monday, then it is 0.
-        // let days_to_subtract = now_utc.weekday().days_since(chrono::Weekday::Tue) as i64; // If there is USA bank holiday on Monday, then use this
+        // let pqp_days_to_subtract = now_utc.weekday().days_since(chrono::Weekday::Tue) as i64; // If there is USA bank holiday on Monday, then use this
         let pqp_virtual_rebalance_date = now_utc - chrono::Duration::days(pqp_days_to_subtract); // always current or last Monday
         let pqp_real_rebalance_date = pqp_virtual_rebalance_date; // can be Tuesday; TODO: implement holiday checking.
         self.pqp_json_target_date_str = pqp_real_rebalance_date.format("%Y-%m-%d").to_string(); // Seek this in received JSON
@@ -254,6 +259,7 @@ impl FastRunner {
             chrono::Weekday::Sun => ap_virtual_rebalance_date + chrono::Duration::days(1),
             _ => ap_virtual_rebalance_date, // TODO: implement holiday checking.
         };
+        // let ap_real_rebalance_date = ap_real_rebalance_date + chrono::Duration::days(1); // If there is USA bank holiday on Monday, then use this
         self.ap_json_target_date_str = ap_real_rebalance_date.format("%Y-%m-%d").to_string(); // Seek this in received JSON
         // Check if today is the real_rebalance_date
         self.ap_is_run_today = now_utc == ap_real_rebalance_date;
@@ -282,15 +288,16 @@ impl FastRunner {
             pqp_virtual_rebalance_date, pqp_real_rebalance_date, self.pqp_is_run_today, ap_virtual_rebalance_date, ap_real_rebalance_date, self.ap_is_run_today, self.pqp_buy_pv, self.pqp_sell_pv, self.ap_buy_pv);
         writeln!(self.user_log, "pqp_virtual_rebalance_date: {}, pqp_real_rebalance_date: {}, pqp_is_run_today: {}, ap_virtual_rebalance_date: {}, ap_real_rebalance_date: {}, ap_is_run_today: {}, pqp_buy_pv: {}, pqp_sell_pv: {}, ap_buy_pv: {}", 
             pqp_virtual_rebalance_date, pqp_real_rebalance_date, self.pqp_is_run_today, ap_virtual_rebalance_date, ap_real_rebalance_date, self.ap_is_run_today, self.pqp_buy_pv, self.pqp_sell_pv, self.ap_buy_pv).unwrap(); // write!() macro never panics for a String (infallible), so unwrap() is safe
+    }
 
-        }
-
+    // >2026-02-17: They updated the PQP.Analysis tabpage at 12:00 (but it only has tickerList for Buys, not Sells)
+    // But they updated the PQP.Portfolio tab only at 12:15 (too late). If they do this always, we have to implement reading the Analysis tab.
+    // But that will pose problems, as to avoid trading many times.
+    // Also, the only way to get the Sells is to read the article, and extract from it, which is error prone and another extra step.
     pub async fn get_new_buys_sells_pqp(&mut self) -> (String, Vec<TransactionEvent>, Vec<TransactionEvent>) {
         log_and_println!(">*{} get_new_buys_sells_pqp() started. target_date: {}", Utc::now().format("%H:%M:%S%.3f"), self.pqp_json_target_date_str);
 
-        benchmark_elapsed_time("ensure_cookies_loaded()", || {  // 300us first, 70us later
-            self.ensure_cookies_loaded(); // cookies are reloaded from file only if needed, if the file changed.
-        });
+        self.ensure_cookies_loaded(); // cookies are reloaded from file only if needed, if the file changed.
         self.m_is_cookies_surely_working = false;
 
         const URL: &str = "https://seekingalpha.com/api/v3/quant_pro_portfolio/transactions?include=ticker.slug%2Cticker.name%2Cticker.companyName&page[size]=1000&page[number]=1";
@@ -321,10 +328,10 @@ impl FastRunner {
 
         if body_text.len() < 1000 {
             if body_text.contains("Subscription is required") {
-                log::error!("!Error. No permission, Update cookie file."); // we don't have to terminate the infinite Loop. The admin can update the cookie file and the next iteration will notice it.
+                log::error!("!Error. No permission, Update cookie file. See {}", file_path.display()); // we don't have to terminate the infinite Loop. The admin can update the cookie file and the next iteration will notice it.
                 return (self.pqp_json_target_date_str.clone(), Vec::new(), Vec::new());
             } else if body_text.contains("captcha.js") {
-                log::error!("!Error. Captcha required, Update cookie file AND handle Captcha in browser."); // we don't have to terminate the infinite Loop. The admin can update the cookie file and the next iteration will notice it.
+                log::error!("!Error. Captcha required, Update cookie file AND handle Captcha in browser. See {}", file_path.display()); // we don't have to terminate the infinite Loop. The admin can update the cookie file and the next iteration will notice it.
                 return (self.pqp_json_target_date_str.clone(), Vec::new(), Vec::new());
             }
         }
@@ -443,13 +450,6 @@ impl FastRunner {
             return;
         }
 
-        // If we are here, there are events to trade. Assure that we trade only once.
-        if self.has_trading_ever_started { // Assure that Trading only happens once per FastRunner instance. To avoid trading it many times.
-            log::warn!("Trading already started. Skipping this iteration.");
-            return;
-        }
-        self.has_trading_ever_started = true;
-
         self.determine_position_market_values_pqp_gyantal(&mut new_buy_events, &mut new_sell_events); // replace it to blukucz if needed
 
         let mut orders: Vec<RqOrder> = Vec::with_capacity(new_buy_events.len() + new_sell_events.len());
@@ -472,16 +472,24 @@ impl FastRunner {
             });
         }
 
+        // If we are here, there are events to trade. Assure that we trade only once.
+        if self.has_trading_ever_started { // Assure that Trading only happens once per FastRunner instance. To avoid trading it many times.
+            log::warn!("Trading already started. Skipping this iteration.");
+            return;
+        }
+        self.has_trading_ever_started = true;
+
         RoboTrader::place_orders("SA_PQP", orders, self.is_simulation).await;
     }
 
-
+    // >2026-02-17: They updated the AP.Analysis tabpage at 12:00, but there was no TickerList tag in it
+    // The AP.Portfolio tab was updated only 15min later. (So, that is not a solution either)
+    // One idea to implement: If we found an article that is exactly the right time. ("publishOn": "2026-02-17T12:01:21-05:00")
+    // Ask Grok: "What is the ticker of the company mentioned in this summary:"
     pub async fn get_new_buys_sells_ap(&mut self) -> (String, Vec<TransactionEvent>) {
         log_and_println!(">*{} get_new_buys_sells_ap() started. target_date: {}", Utc::now().format("%H:%M:%S%.3f"), self.ap_json_target_date_str);
 
-        benchmark_elapsed_time("ensure_cookies_loaded()", || {  // 300us first, 70us later
-            self.ensure_cookies_loaded(); // cookies are reloaded from file only if needed, if the file changed.
-        });
+        self.ensure_cookies_loaded(); // cookies are reloaded from file only if needed, if the file changed.
         self.m_is_cookies_surely_working = false;
 
         const URL: &str = "https://seekingalpha.com/api/v3/service_plans/458/marketplace/articles?include=primaryTickers%2CsecondaryTickers%2CservicePlans%2CservicePlanArticles%2Cauthor%2CsecondaryAuthor";
@@ -511,10 +519,10 @@ impl FastRunner {
         tokio::fs::write(&file_path, &body_text).await.expect("fs::write() failed!");
 
         if !body_text.contains("\"isPaywalled\":false") { // Search ""isPaywalled":false". If it can be found, then it is good. Otherwise, we get the articles, but the primaryTickers will be empty.
-            log::error!("!Error. No permission, Update cookie file."); // we don't have to terminate the infinite Loop. The admin can update the cookie file and the next iteration will notice it.
+            log::error!("!Error. No permission, Update cookie file. See {}. Sometimes it fixes itself in next query.", file_path.display()); // we don't have to terminate the infinite Loop. The admin can update the cookie file and the next iteration will notice it.
             return (self.ap_json_target_date_str.clone(), Vec::new());
         } else if body_text.contains("captcha.js") {
-            log::error!("!Error. Captcha required, Update cookie file AND handle Captcha in browser."); // we don't have to terminate the infinite Loop. The admin can update the cookie file and the next iteration will notice it.
+            log::error!("!Error. Captcha required, Update cookie file AND handle Captcha in browser. See {}", file_path.display()); // we don't have to terminate the infinite Loop. The admin can update the cookie file and the next iteration will notice it.
             return (self.ap_json_target_date_str.clone(), Vec::new());
         }
 
@@ -625,13 +633,6 @@ impl FastRunner {
             return;
         }
 
-        // If we are here, there are events to trade. Assure that we trade only once.
-        if self.has_trading_ever_started { // Assure that Trading only happens once per FastRunner instance. To avoid trading it many times.
-            log::warn!("Trading already started. Skipping this iteration.");
-            return;
-        }
-        self.has_trading_ever_started = true;
-
         self.determine_position_market_values_ap_gyantal(&mut new_buy_events); // replace it to blukucz if needed
 
         let mut orders: Vec<RqOrder> = Vec::with_capacity(new_buy_events.len());
@@ -644,6 +645,13 @@ impl FastRunner {
                 known_last_price: event.price.as_deref().and_then(|s| s.parse::<f64>().ok()),
             });
         }
+
+        // If we are here, there are events to trade. Assure that we trade only once.
+        if self.has_trading_ever_started { // Assure that Trading only happens once per FastRunner instance. To avoid trading it many times.
+            log::warn!("Trading already started. Skipping this iteration.");
+            return;
+        }
+        self.has_trading_ever_started = true;
 
         RoboTrader::place_orders("SA_AP", orders, self.is_simulation).await;
     }

@@ -52,7 +52,12 @@
       "request": "launch",
       "cargo": { "args": ["+stable", "build", "--manifest-path", "${workspaceFolder}/src/rqcoresrv/Cargo.toml","--bin", "rqcoresrv"] }, // on Linux
       "windows": {
-        "cargo": { "args": ["+stable-x86_64-pc-windows-gnu", "build", "--manifest-path", "${workspaceFolder}/src/rqcoresrv/Cargo.toml", "--bin", "rqcoresrv"] } // force GNU toolchain on Windows (for debugging)
+        "cargo": {
+          "args": ["+stable-x86_64-pc-windows-gnu", "build", "--manifest-path", "${workspaceFolder}/src/rqcoresrv/Cargo.toml", "--bin", "rqcoresrv"], // force GNU toolchain on Windows (for debugging)
+          "env": {
+            // "RUSTFLAGS": "-C split-debuginfo=off"
+          }
+        }
       },
       "cwd": "${workspaceFolder}/src/rqcoresrv",
       "args": [],

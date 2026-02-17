@@ -44,7 +44,13 @@ cd $ROOT
 echo "*** Compiling in release mode..."
 cd $ROOT/staging/src/rqcoresrv
 # If running in crontab, $PATH is minimalist, so we need to specify full path to cargo. Otherwise "cargo: command not found"
-/home/rquser/.cargo/bin/cargo build --release 2>&1
+# Override the rust-toolchain.toml ('nightly' is needed for VsCode Format Selection) setting from the command line by using the +toolchain shorthand with Cargo.
+/home/rquser/.cargo/bin/cargo +stable build --release 2>&1
+
+# >If compiling error is this:  "Compiling url v2.5.7
+# warning: openssl-sys@0.9.111: Could not find directory of OpenSSL installation, and this `-sys` crate cannot proceed without this knowledge.
+# Most likely, you need to install a pkg-config package for your OS.  Try `apt install pkg-config`
+# Fix: with sysamin user: sudo apt install pkg-config
 
 echo "*** Running tests..."
 #cd ../rqcoresrv_test
@@ -84,6 +90,6 @@ screen -S "rqcoresrv" -d -m
 echo "*** A new screen 'rqcoresrv' is created. Sleeping for 1 sec before sending command to start webserver..."
 sleep 1
 
-screen -r "rqcoresrv" -X stuff $'cd /home/rquser/RQ/rqcoresrv/prod/src/rqcoresrv\nexport RUST_LOG=warn,rqcoresrv=info,ibapi=info\n./target/release/rqcoresrv\n'
+screen -r "rqcoresrv" -X stuff $'cd /home/rquser/RQ/rqcoresrv/prod/src/rqcoresrv\nexport RUST_LOG=warn,rqcoresrv=info,rqcommon=info,broker_common=info,ibapi=info\n./target/release/rqcoresrv\n'
 
 echo "*** Deployment completed at $(date)"

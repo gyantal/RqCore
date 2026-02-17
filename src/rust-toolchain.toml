@@ -15,5 +15,19 @@
 #    "rust-analyzer.rustfmt.extraArgs": [
 #        "+nightly"
 #    ]
-# The Rust release channels (can be: stable, beta, nightly, or a specific version like "1.82.0").
+# The Rust release channels (can be: stable, beta, nightly, or a specific version like "1.82.0", but cannot pick between GNU vs. MSVC).
+# channel = "nightly-x86_64-pc-windows-gnu" // this is not allowed. Ignored if I set it. You cannot choose GNU vs. MSVC via this.
+
+# Note that the launch.json's "cargo": { "args": ["+stable-x86_64-pc-windows-gnu" only affects the build process. Not the VsCode Debugger extension.
+# CodeLLDB (the debugger extension) loads Rust's LLDB data formatters from the default configured toolchain for your workspace root.
+# Make sure that the default ('rustup show' will show that) is stable-x86_64-pc-windows-gnu. Otherwise CodeLLDB debugger will complain, because it tries to load the MSVC formatters.
+
+# VsCode DebugConsole Warning: 2026-02-17: ignore that.
+# "warning: (x86_64) C:\agy\GitHub\RqCore\src\rqcoresrv\target\debug\rqcoresrv.exe unable to locate separate debug file (dwo, dwp). Debugging will be degraded."
+# Cargo's split-debuginfo = "off" or rustc -C split-debuginfo=off is the only working debuginfo version now on Windows.
+# So, debug-info is not split into separate (dwo, dwp) files on Windows. RustC gives the following errors if tried to create separate DWO, DWP debuginfo:
+# >error: `-Csplit-debuginfo=packed` is unstable on this platform
+# >error: `-Csplit-debuginfo=unpacked` is unstable on this platform
+# 2026-02-17: Conclusion: debugging, watching works, so ignore the CodeLldb warning. Windows support of DWO, DWP separate debug files will come.
+
 channel = "nightly"  # "stable" or "nightly" # keep it nightly, so we have "Format Selection" and variable type deduction in VsCode

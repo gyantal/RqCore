@@ -143,6 +143,9 @@ impl RqTask for FastRunnerPqpTask {
                 log_and_println!(">*{} FastRunnerPqpTask run(): Loop iteration (IsSimu:{})", Utc::now().format("%H:%M:%S%.3f"), fast_runner.is_simulation);
 
                 fast_runner.fastrunning_loop_pqp_impl().await;
+                if self.is_manual_user_forcerun { // User forcerun only wants to test 1 loop. And if "No new buy/sell events on {}. Skipping trading." happens, then has_trading_ever_started cannot be used to exits after 1 loop, because it will never be true.
+                    break;
+                }
 
                 if fast_runner.has_trading_ever_started {
                     log_and_println!("FastRunnerPqpTask: Trading has started, exiting the loop.");
@@ -244,6 +247,9 @@ impl RqTask for FastRunnerApTask {
                 log_and_println!(">*{} FastRunnerApTask run(): Loop iteration (IsSimu:{})", Utc::now().format("%H:%M:%S%.3f"), fast_runner.is_simulation);
 
                 fast_runner.fastrunning_loop_ap_impl().await;
+                if self.is_manual_user_forcerun { // User forcerun only wants to test 1 loop. And if "No new buy/sell events on {}. Skipping trading." happens, then has_trading_ever_started cannot be used to exits after 1 loop, because it will never be true.
+                    break;
+                }
 
                 if fast_runner.has_trading_ever_started {
                     log_and_println!("FastRunnerApTask: Trading has started, exiting the loop.");

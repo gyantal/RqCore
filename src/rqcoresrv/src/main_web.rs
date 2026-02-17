@@ -56,6 +56,9 @@ async fn browser_cache_control_30_days_middleware<B>(
 where
     B: MessageBody + 'static,
 {
+    // To test whether index.html is coming from browser cache or reloaded: in Chrome, F12 (Disable cache is OFF), and type the URL into the URL bar. Don't press the Reload icon.
+    // Pressing Reload icon always fetches it from the server (even if it should be cached.) Type, retype the https://rqcore.com/ in the URL bar.
+
     // If needed in the future for website version updates, 'all domain' server-side browser-cache-busting can be done with Response header Clear-Site-Data: "cache" (HTTPS only)
 
     // let path = req.path().to_string();
