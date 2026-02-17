@@ -295,7 +295,7 @@ impl FastRunner {
     // But that will pose problems, as to avoid trading many times.
     // Also, the only way to get the Sells is to read the article, and extract from it, which is error prone and another extra step.
     pub async fn get_new_buys_sells_pqp(&mut self) -> (String, Vec<TransactionEvent>, Vec<TransactionEvent>) {
-        log_and_println!(">*{} get_new_buys_sells_pqp() started. target_date: {}", Utc::now().format("%H:%M:%S%.3f"), self.pqp_json_target_date_str);
+        // log_and_println!(">*{} get_new_buys_sells_pqp() started. target_date: {}", Utc::now().format("%H:%M:%S%.3f"), self.pqp_json_target_date_str);
 
         self.ensure_cookies_loaded(); // cookies are reloaded from file only if needed, if the file changed.
         self.m_is_cookies_surely_working = false;
@@ -329,9 +329,11 @@ impl FastRunner {
         if body_text.len() < 1000 {
             if body_text.contains("Subscription is required") {
                 log::error!("!Error. No permission, Update cookie file. See {}", file_path.display()); // we don't have to terminate the infinite Loop. The admin can update the cookie file and the next iteration will notice it.
+                writeln!(self.user_log, "!Error. No permission, Update cookie file. See {}", file_path.display()).unwrap(); // write!() macro never panics for a String (infallible), so unwrap() is safe
                 return (self.pqp_json_target_date_str.clone(), Vec::new(), Vec::new());
             } else if body_text.contains("captcha.js") {
                 log::error!("!Error. Captcha required, Update cookie file AND handle Captcha in browser. See {}", file_path.display()); // we don't have to terminate the infinite Loop. The admin can update the cookie file and the next iteration will notice it.
+                writeln!(self.user_log, "!Error. Captcha required, Update cookie file AND handle Captcha in browser. See {}", file_path.display()).unwrap(); // write!() macro never panics for a String (infallible), so unwrap() is safe
                 return (self.pqp_json_target_date_str.clone(), Vec::new(), Vec::new());
             }
         }
@@ -487,7 +489,7 @@ impl FastRunner {
     // One idea to implement: If we found an article that is exactly the right time. ("publishOn": "2026-02-17T12:01:21-05:00")
     // Ask Grok: "What is the ticker of the company mentioned in this summary:"
     pub async fn get_new_buys_sells_ap(&mut self) -> (String, Vec<TransactionEvent>) {
-        log_and_println!(">*{} get_new_buys_sells_ap() started. target_date: {}", Utc::now().format("%H:%M:%S%.3f"), self.ap_json_target_date_str);
+        // log_and_println!(">*{} get_new_buys_sells_ap() started. target_date: {}", Utc::now().format("%H:%M:%S%.3f"), self.ap_json_target_date_str);
 
         self.ensure_cookies_loaded(); // cookies are reloaded from file only if needed, if the file changed.
         self.m_is_cookies_surely_working = false;

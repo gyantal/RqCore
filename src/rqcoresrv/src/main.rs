@@ -24,7 +24,8 @@ mod webapps; // refers ./webapps/mod.rs
 mod main_web; // refers main_web.rs as a module
 
 use crate::{
-    services::rqtask_scheduler::{RQ_TASK_SCHEDULER, HeartbeatTask, FastRunnerPqpTask, FastRunnerApTask, RqTask},
+    services::rqtask_scheduler::{RQ_TASK_SCHEDULER, HeartbeatTask, RqTask},
+    robotrader::fast_runner_task::{FastRunnerPqpTask, FastRunnerApTask},
     main_web::actix_websrv_run,
 };
 

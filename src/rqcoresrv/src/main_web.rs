@@ -1,6 +1,6 @@
 use std::{fs::File, io::BufReader, fmt, sync::Arc};
 use actix_files::Files;
-use actix_web::{cookie::Key, web, App, Error, HttpServer, body::MessageBody, middleware::{from_fn, Compress, Logger, Next}, dev::{ServerHandle, ServiceResponse}, http::header::{CACHE_CONTROL, HeaderValue}};
+use actix_web::{cookie::Key, web, App, HttpServer, middleware::{from_fn, Compress, Logger}, dev::{ServerHandle}};
 use rustls::{ServerConfig, crypto::aws_lc_rs::sign::any_supported_type, pki_types::{CertificateDer, PrivateKeyDer}, server::{ClientHello, ResolvesServerCert, ResolvesServerCertUsingSni}, sign::CertifiedKey};
 use rustls_pemfile;
 use actix_identity::IdentityMiddleware;
@@ -9,7 +9,7 @@ use actix_session::{storage::CookieSessionStore, config::PersistentSession, Sess
 use rqcommon::utils::runningenv::{sensitive_config_folder_path};
 use crate::{
     RuntimeInfo,
-    middleware::{ user_account, server_diagnostics::{self}, http_request_logger::{self, HTTP_REQUEST_LOGS, HttpRequestLogs, http_request_logger_middleware}},
+    middleware::{ browser_cache_control::browser_cache_control_30_days_middleware, user_account, server_diagnostics::{self}, http_request_logger::{self, HTTP_REQUEST_LOGS, HttpRequestLogs, http_request_logger_middleware}},
     webapps::test_websocket::test_ws::test_websocket_middleware,
 };
 
@@ -47,33 +47,6 @@ fn is_taconite_domain(ctx: &actix_web::guard::GuardContext) -> bool {
     println!("DEBUG: UriHost='{:?}' HeaderHost='{:?}' HeaderAuthority='{:?}'", uri_host, host_header, authority_header, );
     host.to_lowercase().contains("thetaconite.com")
 }
-
-// Middleware function to add 30-day cache headers
-async fn browser_cache_control_30_days_middleware<B>(
-    req: actix_web::dev::ServiceRequest,
-    next: Next<B>,
-) -> Result<ServiceResponse<impl MessageBody>, Error>
-where
-    B: MessageBody + 'static,
-{
-    // To test whether index.html is coming from browser cache or reloaded: in Chrome, F12 (Disable cache is OFF), and type the URL into the URL bar. Don't press the Reload icon.
-    // Pressing Reload icon always fetches it from the server (even if it should be cached.) Type, retype the https://rqcore.com/ in the URL bar.
-
-    // If needed in the future for website version updates, 'all domain' server-side browser-cache-busting can be done with Response header Clear-Site-Data: "cache" (HTTPS only)
-
-    // let path = req.path().to_string();
-    let mut res = next.call(req).await?;
-
-    // if path == "/" || matches!(path.as_str(), "/useraccount/login" | "/useraccount/logout")
-    // {
-    //     res.headers_mut().insert(CACHE_CONTROL, HeaderValue::from_static("no-store, no-cache, must-revalidate, max-age=0"));
-    // } else {
-    //     res.headers_mut().insert(CACHE_CONTROL, HeaderValue::from_static("public, max-age=2592000"));
-    // }
-    res.headers_mut().insert(CACHE_CONTROL, HeaderValue::from_static("public, max-age=2592000")); // 2592000 = 30 days in seconds
-    Ok(res)
-}
-
 
 // actix's bind_rustls_0_23() returns std::io::Error, so we return general std::error::Error here.
 pub fn actix_websrv_run(runtime_info: Arc<RuntimeInfo>, server_workers: usize) -> Result<(actix_web::dev::Server, ServerHandle), Box<dyn std::error::Error + Send + Sync + 'static>> {
