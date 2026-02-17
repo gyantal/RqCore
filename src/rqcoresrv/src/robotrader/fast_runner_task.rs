@@ -116,6 +116,7 @@ impl RqTask for FastRunnerPqpTask {
             }
             log_and_println!("{} FastRunnerPqpTask run() ended", Utc::now().format("%H:%M:%S%.3f"));
             if let Some(email_to_address) = get_rqcore_config().get("email_gyant") {
+                // In the final stage: just send email about live trades run(), but not the previous 3x simulations (except if there was an error in simulation).
                 RqEmail::send_text(email_to_address, "RqCore: FastRunnerPqpTask run() ended", fast_runner.user_log.as_str());
             }
         })

@@ -9,7 +9,7 @@ use actix_session::{storage::CookieSessionStore, config::PersistentSession, Sess
 use rqcommon::utils::runningenv::{sensitive_config_folder_path};
 use crate::{
     RuntimeInfo,
-    middleware::{ browser_cache_control::browser_cache_control_30_days_middleware, user_account, server_diagnostics::{self}, http_request_logger::{self, HTTP_REQUEST_LOGS, HttpRequestLogs, http_request_logger_middleware}},
+    middleware::{ browser_cache_control::{self}, http_request_logger::{self, HTTP_REQUEST_LOGS, HttpRequestLogs, http_request_logger_middleware}, server_diagnostics::{self}, user_account},
     webapps::test_websocket::test_ws::test_websocket_middleware,
 };
 
@@ -128,7 +128,7 @@ pub fn actix_websrv_run(runtime_info: Arc<RuntimeInfo>, server_workers: usize) -
         App::new()
             .wrap(Logger::default())
             .wrap(Compress::default()) // Enable compression (including Brotli when supported by client). We gave up compile time brotli.exe, as it complicates Linux deployment, and we use browser cache control for 30 days, so clients only get pages once per month. Not frequently. So, not much usefulness. And deployment is easier.
-            .wrap(from_fn(browser_cache_control_30_days_middleware))
+            .wrap(from_fn(browser_cache_control::browser_cache_control_30_days_middleware))
             .wrap(from_fn(http_request_logger_middleware))
             .wrap(IdentityMiddleware::default()) // Enables Identity API; identity is stored inside the session.
             .wrap(SessionMiddleware::builder(CookieSessionStore::default(), Key::from(cookie_encrypt_secret_key.as_bytes())) // Uses an encrypted cookie to store the entire session.
@@ -140,6 +140,7 @@ pub fn actix_websrv_run(runtime_info: Arc<RuntimeInfo>, server_workers: usize) -
             .cookie_same_site(actix_web::cookie::SameSite::None) // Required for Google OAuth redirects; allows cross-site cookies.
             .cookie_domain(None)
             .build())
+            .service(browser_cache_control::browser_domain_cache_bust_header)
             .service(user_account::login)
             .service(user_account::google_callback)
             .service(user_account::logout)
