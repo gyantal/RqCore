@@ -12,7 +12,7 @@ chrono = { version = "0.4.43", features = ["serde"] }
 chrono-tz = "0.10.4"
 
 # ibapi: Async only (default features)
-ibapi = "2.9.0"
+ibapi = "2.9.1"
 # Async + blocking together
 # ibapi = { version = "2.0", default-features = false, features = ["sync", "async"] }
 

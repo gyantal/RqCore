@@ -247,16 +247,18 @@ pub async fn authorized_sample(session: Session) -> impl Responder {
     }
 }
 
+const RQCORE_INDEX: &str = include_str!("../../static/index.html"); // compile time operation. Read the file and represent it as a const String. Increases the EXE size. Index.html changes need recompilation. But that is fine.
+const RQCORE_NOUSER: &str = include_str!("../../static/index_nouser.html");
+const TACONITE_INDEX: &str = include_str!("../../static/taconite/index.html");
+const TACONITE_NOUSER: &str = include_str!("../../static/taconite/index_nouser.html");
+
 #[get("/")] // Without declaring it, this is also called for "/index.html", which is a standard practice.
 pub async fn root_index(http_req: HttpRequest, id: Option<Identity>, session: Session) -> impl Responder {
     let host = http_req.connection_info().host().to_string();
     let is_logged_in = id.as_ref().is_some_and(|i| i.id().is_ok());
     let is_taconite = host.contains("thetaconite.com");
     println!("Host: {}, is_taconite: {}", http_req.connection_info().host(), is_taconite);
-    const RQCORE_INDEX: &str = include_str!("../../static/index.html");
-    const RQCORE_NOUSER: &str = include_str!("../../static/index_nouser.html");
-    const TACONITE_INDEX: &str = include_str!("../../static/taconite/index.html");
-    const TACONITE_NOUSER: &str = include_str!("../../static/taconite/index_nouser.html");
+
     // 1. Choose which file to serve
     let (index, index_nouser) = if is_taconite {(TACONITE_INDEX, TACONITE_NOUSER)} else {(RQCORE_INDEX, RQCORE_NOUSER)};
     let html_file = if is_logged_in { index } else { index_nouser };
