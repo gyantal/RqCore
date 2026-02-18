@@ -7,7 +7,6 @@ use reqwest::Client;
 use serde::Deserialize;
 use std::collections::HashMap;
 use percent_encoding::{percent_encode, percent_decode_str, NON_ALPHANUMERIC};
-use std::{path::Path};
 
 use crate::get_rqcore_config;
 // use rqcommon::utils::runningenv::{RqCoreConfig};
@@ -228,10 +227,17 @@ pub async fn user_infor(session: Session) -> impl Responder {
 
 #[get("/useraccount/authorized_sample")]
 pub async fn authorized_sample(session: Session) -> impl Responder {
-    let allowed_users = ["gyantal@gmail.com", "gyantal1@gmail.com", "drcharmat@gmail.com", "laszlo.nemeth.hu@gmail.com", "blukucz@gmail.com", "dayakar.kodirekka@gmail.com"];
+    let cfg = get_rqcore_config();
+    let mut allowed_users: Vec<String> = Vec::new();
+
+    for (key, value) in cfg.iter() {
+        if key.starts_with("email_") {
+            allowed_users.push(value.to_string());
+        }
+    }
 
     match session.get::<String>("user_email") {
-        Ok(Some(email)) if allowed_users.contains(&email.as_str()) => {
+        Ok(Some(email)) if allowed_users.contains(&email) => {
             HttpResponse::Ok().body(format!("Welcome, authorized user: {}", email))
         }
         Ok(Some(email)) => {
@@ -247,19 +253,17 @@ pub async fn root_index(http_req: HttpRequest, id: Option<Identity>, session: Se
     let is_logged_in = id.as_ref().is_some_and(|i| i.id().is_ok());
     let is_taconite = host.contains("thetaconite.com");
     println!("Host: {}, is_taconite: {}", http_req.connection_info().host(), is_taconite);
+    const RQCORE_INDEX: &str = include_str!("../../static/index.html");
+    const RQCORE_NOUSER: &str = include_str!("../../static/index_nouser.html");
+    const TACONITE_INDEX: &str = include_str!("../../static/taconite/index.html");
+    const TACONITE_NOUSER: &str = include_str!("../../static/taconite/index_nouser.html");
     // 1. Choose which file to serve
-    let filename = if is_logged_in { "index.html" } else { "index_nouser.html" };
-    let base_folder = if host.contains("thetaconite.com") { "./static/taconite" } else { "./static" }; // Domain-specific folder
-    let file_path = Path::new(base_folder).join(filename);
-    println!("Serving file: {}", file_path.display());
+    let (index, index_nouser) = if is_taconite {(TACONITE_INDEX, TACONITE_NOUSER)} else {(RQCORE_INDEX, RQCORE_NOUSER)};
+    let html_file = if is_logged_in { index } else { index_nouser };
 
-    // 2. Read the file content
-    let mut html = match std::fs::read_to_string(&file_path) {
-        Ok(content) => content,
-        Err(_) => return HttpResponse::NotFound().body("File not found"),
-    };
+    let mut html = html_file.to_string();
 
-    // 3. If user is logged in -> give email
+    // 2. If user is logged in -> give email
     if id.is_some() {
         match session.get::<String>("user_email") {
             Ok(Some(email)) => {
@@ -270,7 +274,7 @@ pub async fn root_index(http_req: HttpRequest, id: Option<Identity>, session: Se
         }
     }
 
-    // 4. Serve the modified HTML
+    // 3. Serve the modified HTML
     HttpResponse::Ok()
     .insert_header((header::CONTENT_TYPE, "text/html; charset=utf-8"))
     .body(html)
