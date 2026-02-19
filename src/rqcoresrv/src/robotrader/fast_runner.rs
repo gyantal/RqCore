@@ -85,6 +85,7 @@ pub struct StockAttributes {
 #[allow(dead_code)]
 pub struct TransactionEvent {
     pub transaction_id: String,
+    pub order_type: RqOrderType,
     pub action_date: String,
     pub ticker: String, // this is StockAttributes.name
     pub company_name: String,
@@ -212,31 +213,6 @@ impl FastRunner {
         self.pqp_ap_calculate_dates_and_pv();
     }
 
-    const COOKIES_FILE_PATH: &'static str = "../../../rqcore_data/fast_run_1_headers.txt";
-    // Elapsed Time of ensure_cookies_loaded(): 
-    // first file read: 13,643us, 
-    // full reread the same file: 700us,  
-    // if checking only file_modified_time: 130us, 
-    // if checking only m_is_cookies_surely_working and returning: 0.40us
-    fn ensure_cookies_loaded(&mut self) {
-        if self.m_is_cookies_surely_working { // skip 130us file operation, checking the file_modified_time if we are sure that cookies are working
-            return;
-        }
-
-        let file_metadata = fs::metadata(Self::COOKIES_FILE_PATH).expect("metadata() failed for cookies file");
-        let file_modified_time = file_metadata.modified().expect("modified() failed for cookies file");
-
-        let need_reload = self.cookies.is_none()
-            || self.cookies_file_last_modtime.map(|t| t != file_modified_time).unwrap_or(true);
-
-        if need_reload {
-            let content = fs::read_to_string(Self::COOKIES_FILE_PATH).expect("read_to_string() failed!");
-            self.cookies = Some(content.trim().to_string());
-            self.cookies_file_last_modtime = Some(file_modified_time);
-            log::info!("Cookies loaded/refreshed from file.");
-        }
-    }
-
     pub fn pqp_ap_calculate_dates_and_pv(&mut self) {
         let now_utc = Utc::now().date_naive();
 
@@ -290,16 +266,17 @@ impl FastRunner {
             pqp_virtual_rebalance_date, pqp_real_rebalance_date, self.pqp_is_run_today, ap_virtual_rebalance_date, ap_real_rebalance_date, self.ap_is_run_today, self.pqp_buy_pv, self.pqp_sell_pv, self.ap_buy_pv).unwrap(); // write!() macro never panics for a String (infallible), so unwrap() is safe
     }
 
-    // >2026-02-17: They updated the PQP.Analysis tabpage at 12:00 (but it only has tickerList for Buys, not Sells)
+    // >2026-02-17: They updated the PQP.Analysis tabpage at 12:00 (but it only has tickerList for buy entries, not sell entries)
     // But they updated the PQP.Portfolio tab only at 12:15 (too late). If they do this always, we have to implement reading the Analysis tab.
     // But that will pose problems, as to avoid trading many times.
-    // Also, the only way to get the Sells is to read the article, and extract from it, which is error prone and another extra step.
-    pub async fn get_new_buys_sells_pqp(&mut self) -> (String, Vec<TransactionEvent>, Vec<TransactionEvent>) {
-        // log_and_println!(">*{} get_new_buys_sells_pqp() started. target_date: {}", Utc::now().format("%H:%M:%S%.3f"), self.pqp_json_target_date_str);
+    // Also, the only way to get sell entries is to read the article and extract them, which is error-prone and an extra step.
+    pub async fn get_new_transactions_pqp(&mut self) -> (String, Vec<TransactionEvent>) {
+        // log_and_println!(">*{} get_new_transactions_pqp() started. target_date: {}", Utc::now().format("%H:%M:%S%.3f"), self.pqp_json_target_date_str);
 
         self.ensure_cookies_loaded(); // cookies are reloaded from file only if needed, if the file changed.
         self.m_is_cookies_surely_working = false;
 
+        // This is not the Portfolio, but the Portfolio History tab, with the 1000 transactions.
         const URL: &str = "https://seekingalpha.com/api/v3/quant_pro_portfolio/transactions?include=ticker.slug%2Cticker.name%2Cticker.companyName&page[size]=1000&page[number]=1";
 
         let mut body_text: String= String::new();
@@ -330,11 +307,11 @@ impl FastRunner {
             if body_text.contains("Subscription is required") {
                 log::error!("!Error. No permission, Update cookie file. See {}", file_path.display()); // we don't have to terminate the infinite Loop. The admin can update the cookie file and the next iteration will notice it.
                 writeln!(self.user_log, "!Error. No permission, Update cookie file. See {}", file_path.display()).unwrap(); // write!() macro never panics for a String (infallible), so unwrap() is safe
-                return (self.pqp_json_target_date_str.clone(), Vec::new(), Vec::new());
+                return (self.pqp_json_target_date_str.clone(), Vec::new());
             } else if body_text.contains("captcha.js") {
                 log::error!("!Error. Captcha required, Update cookie file AND handle Captcha in browser. See {}", file_path.display()); // we don't have to terminate the infinite Loop. The admin can update the cookie file and the next iteration will notice it.
                 writeln!(self.user_log, "!Error. Captcha required, Update cookie file AND handle Captcha in browser. See {}", file_path.display()).unwrap(); // write!() macro never panics for a String (infallible), so unwrap() is safe
-                return (self.pqp_json_target_date_str.clone(), Vec::new(), Vec::new());
+                return (self.pqp_json_target_date_str.clone(), Vec::new());
             }
         }
         
@@ -364,9 +341,8 @@ impl FastRunner {
         //     }
         // }
 
-        // Collect buys/sells for the specific date
-        let mut new_buy_events: Vec<TransactionEvent> = Vec::new();
-        let mut new_sell_events: Vec<TransactionEvent> = Vec::new();
+        // Collect transactions for the specific date
+        let mut new_transaction_events: Vec<TransactionEvent> = Vec::new();
         for transaction in &transactions {
             // Skip if not our target date
             if transaction.attributes.action_date != self.pqp_json_target_date_str {
@@ -377,74 +353,75 @@ impl FastRunner {
                 continue;
             }
             let stock = stocks.get(&transaction.relationships.ticker.data.id);
-            match transaction.attributes.action.as_str() {
-                "buy" => if let Some(stock) = stock {
-                    new_buy_events.push(TransactionEvent {
-                        transaction_id: transaction.id.clone(),
-                        action_date: transaction.attributes.action_date.clone(),
-                        ticker: stock.attributes.name.clone(),
-                        company_name: stock.attributes.company_name.clone(),
-                        starting_weight: transaction.attributes.starting_weight.clone(),
-                        new_weight: transaction.attributes.new_weight.clone(),
-                        price: transaction.attributes.price.clone(),
-                        pos_weight: 0.0,
-                        pos_market_value: 0.0,
-                    });
-                },
-                "sell" => if let Some(stock) = stock {
-                    new_sell_events.push(TransactionEvent {
-                        transaction_id: transaction.id.clone(),
-                        action_date: transaction.attributes.action_date.clone(),
-                        ticker: stock.attributes.name.clone(),
-                        company_name: stock.attributes.company_name.clone(),
-                        starting_weight: transaction.attributes.starting_weight.clone(),
-                        new_weight: transaction.attributes.new_weight.clone(),
-                        price: transaction.attributes.price.clone(),
-                        pos_weight: 0.0,
-                        pos_market_value: 0.0,
-                    });
-                },
-                _ => {}
+            let order_type = match transaction.attributes.action.as_str() {
+                "buy" => Some(RqOrderType::Buy),
+                "sell" => Some(RqOrderType::Sell),
+                _ => None,
+            };
+
+            if let (Some(stock), Some(order_type)) = (stock, order_type) {
+                new_transaction_events.push(TransactionEvent {
+                    transaction_id: transaction.id.clone(),
+                    order_type,
+                    action_date: transaction.attributes.action_date.clone(),
+                    ticker: stock.attributes.name.clone(),
+                    company_name: stock.attributes.company_name.clone(),
+                    starting_weight: transaction.attributes.starting_weight.clone(),
+                    new_weight: transaction.attributes.new_weight.clone(),
+                    price: transaction.attributes.price.clone(),
+                    pos_weight: 0.0,
+                    pos_market_value: 0.0,
+                });
             }
         }
 
-        (self.pqp_json_target_date_str.clone(), new_buy_events, new_sell_events)
+        (self.pqp_json_target_date_str.clone(), new_transaction_events)
     }
 
 
     pub async fn test_http_download_pqp(&mut self) {
-        let (target_action_date, new_buy_events, new_sell_events) = self.get_new_buys_sells_pqp().await;
+        let (target_action_date, new_transaction_events) = self.get_new_transactions_pqp().await;
+
+        let (buy_count, sell_count) = Self::count_order_types(&new_transaction_events);
 
         // Print summary
-        log_and_if_println!(true, "On {}, new positions. Buys:{}, Sells:{}", target_action_date, new_buy_events.len(), new_sell_events.len());
-        for event in &new_buy_events {
-            log_and_if_println!(true, "  BUY {} ({}, ${}) , ", event.ticker, event.company_name, event.price.as_deref().unwrap_or("N/A"));
-        }
-        for event in &new_sell_events {
-            log_and_if_println!(true, "  SELL {} ({}, ${}) , ", event.ticker, event.company_name, event.price.as_deref().unwrap_or("N/A"));
+        log_and_if_println!(true, "On {}, new transactions. Buys:{}, Sells:{}", target_action_date, buy_count, sell_count);
+        for event in &new_transaction_events {
+            log_and_if_println!(true, "  {} {} ({}, ${}) , ", event.order_type, event.ticker, event.company_name, event.price.as_deref().unwrap_or("N/A"));
         }
         // println!(); // print newline for flushing the buffer. Otherwise the last line may not appear immediately.
         // io::stdout().flush().unwrap();  // Ensure immediate output, because it is annoying to wait for newline or buffer full
     }
 
-    fn determine_position_market_values_pqp_gyantal(&self, new_buy_events: &mut Vec<TransactionEvent>, new_sell_events: &mut Vec<TransactionEvent>) {
-        let buy_pos_mkt_value = self.pqp_buy_pv / (new_buy_events.len() as f64);
-        let sell_pos_mkt_value = self.pqp_sell_pv / (new_sell_events.len() as f64);
-        for event in new_buy_events.iter_mut() {
-            event.pos_market_value = buy_pos_mkt_value;
-        }
-        for event in new_sell_events.iter_mut() {
-            event.pos_market_value = sell_pos_mkt_value;
+    fn determine_position_market_values_pqp_gyantal(&self, new_transaction_events: &mut Vec<TransactionEvent>) {
+        let (buy_count, sell_count) = Self::count_order_types(new_transaction_events);
+
+        let buy_pos_mkt_value = if buy_count > 0 {
+            self.pqp_buy_pv / (buy_count as f64)
+        } else {
+            0.0
+        };
+        let sell_pos_mkt_value = if sell_count > 0 {
+            self.pqp_sell_pv / (sell_count as f64)
+        } else {
+            0.0
+        };
+
+        for event in new_transaction_events.iter_mut() {
+            event.pos_market_value = match event.order_type {
+                RqOrderType::Buy => buy_pos_mkt_value,
+                RqOrderType::Sell => sell_pos_mkt_value,
+            };
         }
     }
 
     pub async fn fastrunning_loop_pqp_impl(&mut self) {
 
-        let (target_action_date, mut new_buy_events, mut new_sell_events) = self.get_new_buys_sells_pqp().await;
+        let (target_action_date, mut new_transaction_events) = self.get_new_transactions_pqp().await;
 
-        let num_new_events = new_buy_events.len() + new_sell_events.len();
+        let num_new_events = new_transaction_events.len();
         if num_new_events == 0 {
-            log_and_println!("No new buy/sell events on {}. Skipping trading.", target_action_date);
+            log_and_println!("No new transaction events on {}. Skipping trading.", target_action_date);
             return;
         }
         if num_new_events > 14 { // The most it was 7+7 = 14 trades in the past. And even if it is correct, if there are 8 buys and 8 sells, a lot of trading that I don't want. As in this spread out suggestion, the buying pressure is not that big.
@@ -452,27 +429,9 @@ impl FastRunner {
             return;
         }
 
-        self.determine_position_market_values_pqp_gyantal(&mut new_buy_events, &mut new_sell_events); // replace it to blukucz if needed
+        self.determine_position_market_values_pqp_gyantal(&mut new_transaction_events); // replace it to blukucz if needed
 
-        let mut orders: Vec<RqOrder> = Vec::with_capacity(new_buy_events.len() + new_sell_events.len());
-        for event in &new_buy_events {
-            orders.push(RqOrder {
-                order_type: RqOrderType::Buy,
-                ticker: event.ticker.clone(),
-                company_name: event.company_name.clone(),
-                pos_market_value: event.pos_market_value,
-                known_last_price: event.price.as_deref().and_then(|s| s.parse::<f64>().ok()),
-            });
-        }
-        for event in &new_sell_events {
-            orders.push(RqOrder {
-                order_type: RqOrderType::Sell,
-                ticker: event.ticker.clone(),
-                company_name: event.company_name.clone(),
-                pos_market_value: event.pos_market_value,
-                known_last_price: event.price.as_deref().and_then(|s| s.parse::<f64>().ok()),
-            });
-        }
+        let rqorders = Self::build_rqorders(&new_transaction_events);
 
         // If we are here, there are events to trade. Assure that we trade only once.
         if self.has_trading_ever_started { // Assure that Trading only happens once per FastRunner instance. To avoid trading it many times.
@@ -481,15 +440,15 @@ impl FastRunner {
         }
         self.has_trading_ever_started = true;
 
-        RoboTrader::place_orders("SA_PQP", orders, self.is_simulation).await;
+        RoboTrader::place_orders("SA_PQP", rqorders, self.is_simulation).await;
     }
 
     // >2026-02-17: They updated the AP.Analysis tabpage at 12:00, but there was no TickerList tag in it
     // The AP.Portfolio tab was updated only 15min later. (So, that is not a solution either)
     // One idea to implement: If we found an article that is exactly the right time. ("publishOn": "2026-02-17T12:01:21-05:00")
     // Ask Grok: "What is the ticker of the company mentioned in this summary:"
-    pub async fn get_new_buys_sells_ap(&mut self) -> (String, Vec<TransactionEvent>) {
-        // log_and_println!(">*{} get_new_buys_sells_ap() started. target_date: {}", Utc::now().format("%H:%M:%S%.3f"), self.ap_json_target_date_str);
+    pub async fn get_new_transactions_ap(&mut self) -> (String, Vec<TransactionEvent>) {
+        // log_and_println!(">*{} get_new_transactions_ap() started. target_date: {}", Utc::now().format("%H:%M:%S%.3f"), self.ap_json_target_date_str);
 
         self.ensure_cookies_loaded(); // cookies are reloaded from file only if needed, if the file changed.
         self.m_is_cookies_surely_working = false;
@@ -568,8 +527,8 @@ impl FastRunner {
         //     println!("AP Article: {} | {} | primary_tickers: {}", art.attributes.title, publish_on, tickers_str);
         // }
 
-        // Collect buys for the specific date. The Article tabpage only contains buy events for PQP anyway. For AP, 1st, 15th monthly articles only contain buys. Sell comes sporadically intra-month.
-        let mut new_buy_events: Vec<TransactionEvent> = Vec::new();
+        // Collect transactions for the specific date. AP rebalance articles (1st/15th) typically contain buy entries.
+        let mut new_transaction_events: Vec<TransactionEvent> = Vec::new();
         for article in &ap_response.data {
             let publish_on = &article.attributes.publish_on; // 2025-10-15T12:00:23-04:00
             let publish_on_dateonly = &publish_on[0..10]; // extract "2025-10-15"
@@ -585,8 +544,9 @@ impl FastRunner {
                         // name can be a non USA (Canada) stock ticker, e.g. ""name": "CLS:CA". If name contains ':', we skip it
                         if name.contains(':')
                             { continue; }
-                        new_buy_events.push(TransactionEvent {
+                        new_transaction_events.push(TransactionEvent {
                             transaction_id: article.id.clone(),
+                            order_type: RqOrderType::Buy,
                             action_date: publish_on_dateonly.to_string(),
                             ticker: name.clone(),
                             company_name: company.clone(),
@@ -601,33 +561,42 @@ impl FastRunner {
             }
         }
 
-        (self.ap_json_target_date_str.clone(), new_buy_events)
+        (self.ap_json_target_date_str.clone(), new_transaction_events)
     }
 
     pub async fn test_http_download_ap(&mut self) {
-        let (target_action_date, new_buy_events) = self.get_new_buys_sells_ap().await;
+        let (target_action_date, new_transaction_events) = self.get_new_transactions_ap().await;
 
         // Print summary
-        log_and_println!("On {}, New BUYS ({})::", target_action_date, new_buy_events.len());
-        for event in &new_buy_events {
-            log_and_println!("  BUY {} ({}, ${}) , ", event.ticker, event.company_name, event.price.as_deref().unwrap_or("N/A"));
+        log_and_if_println!(true, "On {}, new transactions. Buys:{}, Sells:0", target_action_date, new_transaction_events.len());
+        for event in &new_transaction_events {
+            log_and_println!("  {} {} ({}, ${}) , ", event.order_type, event.ticker, event.company_name, event.price.as_deref().unwrap_or("N/A"));
         }
     }
 
-    fn determine_position_market_values_ap_gyantal(&self, new_buy_events: &mut Vec<TransactionEvent>) {
-        let buy_pos_mkt_value = self.ap_buy_pv / (new_buy_events.len() as f64);
-        for event in new_buy_events.iter_mut() {
-            event.pos_market_value = buy_pos_mkt_value;
+    fn determine_position_market_values_ap_gyantal(&self, new_transaction_events: &mut Vec<TransactionEvent>) {
+        let (buy_count, _) = Self::count_order_types(new_transaction_events);
+        let buy_pos_mkt_value = if buy_count > 0 {
+            self.ap_buy_pv / (buy_count as f64)
+        } else {
+            0.0
+        };
+
+        for event in new_transaction_events.iter_mut() {
+            event.pos_market_value = match event.order_type {
+                RqOrderType::Buy => buy_pos_mkt_value,
+                RqOrderType::Sell => 0.0,
+            };
         }
     }
 
     pub async fn fastrunning_loop_ap_impl(&mut self) {
 
-        let (target_action_date, mut new_buy_events) = self.get_new_buys_sells_ap().await;
+        let (target_action_date, mut new_transaction_events) = self.get_new_transactions_ap().await;
 
-        let num_new_events = new_buy_events.len();
+        let num_new_events = new_transaction_events.len();
         if num_new_events == 0 {
-            log_and_println!("No new buy/sell events on {}. Skipping trading.", target_action_date);
+            log_and_println!("No new transaction events on {}. Skipping trading.", target_action_date);
             return;
         }
         if num_new_events > 2 { // There should be 1 new buy per rebalance.
@@ -635,18 +604,9 @@ impl FastRunner {
             return;
         }
 
-        self.determine_position_market_values_ap_gyantal(&mut new_buy_events); // replace it to blukucz if needed
+        self.determine_position_market_values_ap_gyantal(&mut new_transaction_events); // replace it to blukucz if needed
 
-        let mut orders: Vec<RqOrder> = Vec::with_capacity(new_buy_events.len());
-        for event in &new_buy_events {
-            orders.push(RqOrder {
-                order_type: RqOrderType::Buy,
-                ticker: event.ticker.clone(),
-                company_name: event.company_name.clone(),
-                pos_market_value: event.pos_market_value,
-                known_last_price: event.price.as_deref().and_then(|s| s.parse::<f64>().ok()),
-            });
-        }
+        let rqorders = Self::build_rqorders(&new_transaction_events);
 
         // If we are here, there are events to trade. Assure that we trade only once.
         if self.has_trading_ever_started { // Assure that Trading only happens once per FastRunner instance. To avoid trading it many times.
@@ -655,7 +615,58 @@ impl FastRunner {
         }
         self.has_trading_ever_started = true;
 
-        RoboTrader::place_orders("SA_AP", orders, self.is_simulation).await;
+        RoboTrader::place_orders("SA_AP", rqorders, self.is_simulation).await;
     }
 
+    // ---------- Helpers ----------
+
+    const COOKIES_FILE_PATH: &'static str = "../../../rqcore_data/fast_run_1_headers.txt";
+    // Elapsed Time of ensure_cookies_loaded(): 
+    // first file read: 13,643us, 
+    // full reread the same file: 700us,  
+    // if checking only file_modified_time: 130us, 
+    // if checking only m_is_cookies_surely_working and returning: 0.40us
+    fn ensure_cookies_loaded(&mut self) {
+        if self.m_is_cookies_surely_working { // skip 130us file operation, checking the file_modified_time if we are sure that cookies are working
+            return;
+        }
+
+        let file_metadata = fs::metadata(Self::COOKIES_FILE_PATH).expect("metadata() failed for cookies file");
+        let file_modified_time = file_metadata.modified().expect("modified() failed for cookies file");
+
+        let need_reload = self.cookies.is_none()
+            || self.cookies_file_last_modtime.map(|t| t != file_modified_time).unwrap_or(true);
+
+        if need_reload {
+            let content = fs::read_to_string(Self::COOKIES_FILE_PATH).expect("read_to_string() failed!");
+            self.cookies = Some(content.trim().to_string());
+            self.cookies_file_last_modtime = Some(file_modified_time);
+            log::info!("Cookies loaded/refreshed from file.");
+        }
+    }
+
+    fn count_order_types(events: &[TransactionEvent]) -> (usize, usize) {
+        let buy_count = events
+            .iter()
+            .filter(|event| matches!(event.order_type, RqOrderType::Buy))
+            .count();
+        let sell_count = events
+            .iter()
+            .filter(|event| matches!(event.order_type, RqOrderType::Sell))
+            .count();
+        (buy_count, sell_count)
+    }
+
+    fn build_rqorders(events: &[TransactionEvent]) -> Vec<RqOrder> {
+        events
+            .iter()
+            .map(|event| RqOrder {
+                order_type: event.order_type,
+                ticker: event.ticker.clone(),
+                company_name: event.company_name.clone(),
+                pos_market_value: event.pos_market_value,
+                known_last_price: event.price.as_deref().and_then(|s| s.parse::<f64>().ok()),
+            })
+            .collect()
+    }
 }

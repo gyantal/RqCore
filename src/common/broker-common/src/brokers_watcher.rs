@@ -1,4 +1,4 @@
-use std::{sync::{Arc, LazyLock, Mutex}, env, time::Instant};
+use std::{fmt, sync::{Arc, LazyLock, Mutex}, env, time::Instant};
 use ibapi::prelude::*;
 
 use rqcommon::{log_and_println, utils::server_ip::ServerIp};
@@ -12,6 +12,15 @@ pub static RQ_BROKERS_WATCHER: LazyLock<BrokersWatcher> = LazyLock::new(|| Broke
 pub enum RqOrderType {
     Buy,
     Sell,
+}
+
+impl fmt::Display for RqOrderType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            RqOrderType::Buy => write!(f, "BUY"),
+            RqOrderType::Sell => write!(f, "SELL"),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
