@@ -1,5 +1,5 @@
 use std::{sync::{Arc, OnceLock}, path::Path, env, collections::HashMap};
-use tokio::io::{self, AsyncBufReadExt};
+use tokio::{io::{self, AsyncBufReadExt}, runtime::{Handle, RuntimeFlavor}};
 use log;
 use spdlog::{prelude::*, sink::{StdStreamSink, FileSink}, formatter::{pattern, PatternFormatter}};
 use time::macros::datetime;
@@ -192,7 +192,7 @@ async fn console_menu_loop(server_handle: ServerHandle, runtime_info: Arc<Runtim
             },
             "41" => {
                 println!("Spawning background async task...");
-                tokio::spawn(async {
+                tokio::spawn(async { // Actix-web runs N (1 per CPU core) CurrentThread realtimes. For faster response times. So, spawn() tasks start to run when the current task awaits.
                     loop {
                         println!("[task] running...");
                         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
@@ -207,12 +207,12 @@ async fn console_menu_loop(server_handle: ServerHandle, runtime_info: Arc<Runtim
             }
             "51" => {
                 let mut fast_runner = robotrader::fast_runner::FastRunner::new();
-                fast_runner.init();
+                fast_runner.init().await;
                 fast_runner.test_http_download_pqp().await;
             }
             "52" => {
                 let mut fast_runner = robotrader::fast_runner::FastRunner::new();
-                fast_runner.init();
+                fast_runner.init().await;
                 fast_runner.test_http_download_ap().await;
             }
             "53" => {
@@ -332,6 +332,22 @@ async fn test_ibapi_realtime_bars() {
 // Note that RQ_BROKERS_WATCHER's ib-clients are bound to the main tokio runtime that created them.
 // So, you will not be able to use RQ_BROKERS_WATCHER's ib-clients in those new OS threads. 
 // Although you can create new ib-clients inside the new OS thread with new connectionID. (usually, it is not worth it)
+// >Actix-web spawns multiple OS threads (one worker thread per physical CPU core) with single-threaded Tokio (CurrentThread) runtimes per worker.
+// >CurrentThread: runs all spawned tasks on a single thread (the one where the runtime is started), using a local queue for scheduling, and processing them in the event loop.
+// >tokio::spawn() puts the future onto Tokio’s runtime queue right away.
+// On a multi-thread (work-stealing) runtime , it can begin running on another worker thread almost immediately, in parallel with your current task.
+// On a current-thread runtime, it still gets queued immediately, but actual progress happens when the runtime gets a chance to poll (process) the tasks (typically when your current task yields, e.g. at an .await)
+// >runtime_flavor():
+// 	Tokio's default: MultiThread
+// 	Actix-web default: CurrentThread
+// 	Axum default: a single multi-threaded runtime, but Axum is slower than Actix.
+// >Actix choice: tasks stay pinned to a single thread and avoiding thread-safety issues. No need to implement the Send trait for futures.
+// Benchmarks: multiple OS threads each with a single-threaded runtime outperforms a single multi-threaded runtime.
+// It mimics models like NGINX, where each worker has its own event loop, reducing overhead from task migration (work-stealing).
+// This leads to lower latency and higher requests per second.
+// >All an all, we can live with the CurrentThread (single-threaded) runtime. Just keep in mind that:
+// Actix-web runs N (1 per CPU core) CurrentThread realtimes. For faster response times. So, spawn() tasks start to run when the current task awaits. If you want faster start, you can create new OS threads with thread::spawn().
+// TODO: in the future, consider using native Multithread Tokio for the Console Menu, TaskScheduler, for everything, except keep Actix-web with its own single-threaded runtime.
 #[actix_web::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>> { // actix's bind_rustls_0_23() returns std::io::Error
     init_log().expect("Failed to initialize logging"); // if init_log() fails, we are happy to panic crash
@@ -341,6 +357,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>
     // Initialize the global variable RqCoreConfig now (only once), before parallel threads start to use it.
     let rqcore_cfg = get_rqcore_config();
     spdlog::info!("RqCore config loaded: {} entries", rqcore_cfg.len());
+
+    let runtime_flavor = Handle::current().runtime_flavor();
+    match runtime_flavor {
+        RuntimeFlavor::CurrentThread => println!("Tokio/Actix runtime: current-thread (single-threaded)"),
+        RuntimeFlavor::MultiThread => println!("Tokio/Actix runtime: multi-thread"),
+        _ => println!("Tokio/Actix runtime: unknown flavor"),
+    }
 
     init_rqemail(rqcore_cfg)?;
 
@@ -374,7 +397,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>
     let (server, server_handle) = actix_websrv_run(runtime_info.clone(), server_workers)?;
 
     // Spawn async console menu INSIDE the Tokio runtime
-    tokio::spawn(async move {
+    tokio::spawn(async move { // Actix-web runs N (1 per CPU core) CurrentThread realtimes. For faster response times. So, spawn() tasks start to run when the current task awaits.
         console_menu_loop(server_handle, runtime_info).await;
         println!("console_menu_loop() end");
     });

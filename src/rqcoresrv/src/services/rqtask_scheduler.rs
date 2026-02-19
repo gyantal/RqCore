@@ -74,7 +74,7 @@ impl RqTaskScheduler {
     }
 
     pub fn start(&self) {
-        tokio::spawn(async {
+        tokio::spawn(async { // Actix-web runs N (1 per CPU core) CurrentThread realtimes. For faster response times. So, spawn() tasks start to run when the current task awaits.
             log::debug!("RqTaskScheduler started");
             loop {
                 let now = Utc::now();
@@ -92,7 +92,7 @@ impl RqTaskScheduler {
                 // Spawn due tasks as separate async tasks (fire-and-forget, no awaiting);
                 for task in due_tasks {
                     let task_clone = task.clone();
-                    tokio::spawn(async move {  // spawned method might only starts as this sync thread returns to the tokio runtime at next await point
+                    tokio::spawn(async move { // Actix-web runs N (1 per CPU core) CurrentThread realtimes. For faster response times. So, spawn() tasks start to run when the current task awaits.
                         task_clone.run().await;
                     });
                     task.update_next_trigger_time(); // their trigger time is in the past, so update it

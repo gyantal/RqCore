@@ -7,7 +7,7 @@ use broker_common::brokers_watcher::{RqOrder, RqOrderType};
 use crate::robotrader::robo_trader::RoboTrader;
 
 #[derive(Debug, Deserialize)]
-pub struct PqpResponse {
+pub struct PortfhistResponse {
     pub data: Vec<Transaction>,
     pub included: Vec<Stock>,
 }
@@ -98,7 +98,7 @@ pub struct TransactionEvent {
 
     // ---------- Alpha Picks (AP) minimal model from JSON ----------
     #[derive(Debug, Deserialize)]
-    pub struct ApResponse {
+    pub struct AnalysisResponse { // works both in AP and PQP. They have the same JSON structure.
         pub data: Vec<Article>,
         pub included: Vec<IncludedItem>,
     }
@@ -209,8 +209,11 @@ impl FastRunner {
         }
     }
 
-    pub fn init(&mut self) {
+    pub async fn init(&mut self) {
         self.pqp_ap_calculate_dates_and_pv();
+
+        let dir = Path::new("../../../rqcore_data");
+        tokio::fs::create_dir_all(dir).await.expect("create_dir_all() failed!"); // assure only once that the folder exists, so we don't have to do it in every loop iteration
     }
 
     pub fn pqp_ap_calculate_dates_and_pv(&mut self) {
@@ -276,8 +279,17 @@ impl FastRunner {
         self.ensure_cookies_loaded(); // cookies are reloaded from file only if needed, if the file changed.
         self.m_is_cookies_surely_working = false;
 
+        // tokio::spawn() puts the future onto Tokio’s runtime queue right away. And On a multi-thread runtime, it begins running on another worker thread almost immediately. On a current-thread runtime, it runs when the current task at an .await)
+        let analysis_task = tokio::spawn(Self::get_new_transactions_from_analysis_pqp(
+            self.cookies
+                .as_deref()
+                .expect("cookies not initialized")
+                .to_string(),
+            self.pqp_json_target_date_str.clone(),
+        ));
+
         // This is not the Portfolio, but the Portfolio History tab, with the 1000 transactions.
-        const URL: &str = "https://seekingalpha.com/api/v3/quant_pro_portfolio/transactions?include=ticker.slug%2Cticker.name%2Cticker.companyName&page[size]=1000&page[number]=1";
+        const URL_PQP_PORTFOLIO_HISTORY: &str = "https://seekingalpha.com/api/v3/quant_pro_portfolio/transactions?include=ticker.slug%2Cticker.name%2Cticker.companyName&page[size]=1000&page[number]=1";
 
         let mut body_text: String= String::new();
         benchmark_elapsed_time_async("reqwest.Client.get()", || async { // 1,800-3,600ms first, 500-700ms later with keep-alive
@@ -286,7 +298,7 @@ impl FastRunner {
                 .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
                 .build().expect("Client::builder() failed!");
 
-            let resp = client.get(URL)
+            let resp = client.get(URL_PQP_PORTFOLIO_HISTORY)
                 .header("Cookie", self.cookies.as_deref().expect("cookies not initialized"))
                 .send()
                 .await
@@ -297,11 +309,7 @@ impl FastRunner {
         }).await;
         
         // Save raw response
-        let dir = Path::new("../../../rqcore_data");
-        tokio::fs::create_dir_all(dir).await.expect("create_dir_all() failed!"); // create folder if not exists
-        let datetime_str = Local::now().format("%Y%m%dT%H%M%S").to_string();
-        let file_path: PathBuf = dir.join(format!("fast_run_pqp_src_{}.json", datetime_str));
-        tokio::fs::write(&file_path, &body_text).await.expect("fs::write() failed!");
+        let file_path = Self::save_response_file("fast_run_pqp_portfhist_src", &body_text).await;
 
         if body_text.len() < 1000 {
             if body_text.contains("Subscription is required") {
@@ -316,17 +324,17 @@ impl FastRunner {
         }
         
         // Parse saved text as JSON
-        let api_response: PqpResponse = serde_json::from_str(&body_text).expect("serde_json::from_str() failed!");
+        let portfhist_response: PortfhistResponse = serde_json::from_str(&body_text).expect("serde_json::from_str() failed!");
         
         // Extract transactions list (Vec<Transaction>)
-        let transactions = api_response.data;
+        let transactions = portfhist_response.data;
         if !transactions.is_empty() {  // if we have any transactions, cookies are surely working
             self.m_is_cookies_surely_working = true;
         }
         
         // Extract stocks dictionary (HashMap<String, Stock>)
         let mut stocks: HashMap<String, Stock> = HashMap::new();
-        for stock in api_response.included {
+        for stock in portfhist_response.included {
             stocks.insert(stock.id.clone(), stock);
         }
 
@@ -372,6 +380,16 @@ impl FastRunner {
                     pos_weight: 0.0,
                     pos_market_value: 0.0,
                 });
+            }
+        }
+
+        // if PortfHist doesn't give events (sometimes they update 15min later), then get the Buy entries from Analysis page (never delayed, but it only contains the Buys. Better than not trading due to 15min delay)
+        if new_transaction_events.is_empty() {
+            match analysis_task.await {
+                Ok(result) => return result,
+                Err(err) => {
+                    log::warn!("PQP analysis task failed: {}", err);
+                }
             }
         }
 
@@ -453,7 +471,7 @@ impl FastRunner {
         self.ensure_cookies_loaded(); // cookies are reloaded from file only if needed, if the file changed.
         self.m_is_cookies_surely_working = false;
 
-        const URL: &str = "https://seekingalpha.com/api/v3/service_plans/458/marketplace/articles?include=primaryTickers%2CsecondaryTickers%2CservicePlans%2CservicePlanArticles%2Cauthor%2CsecondaryAuthor";
+        const URL_AP_ANALYSIS: &str = "https://seekingalpha.com/api/v3/service_plans/458/marketplace/articles?include=primaryTickers%2CsecondaryTickers%2CservicePlans%2CservicePlanArticles%2Cauthor%2CsecondaryAuthor";
 
         let mut body_text: String= String::new();
         benchmark_elapsed_time_async("reqwest.Client.get()", || async { // 1,800-3,600ms first, 500-700ms later with keep-alive
@@ -462,7 +480,7 @@ impl FastRunner {
                 .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
                 .build().expect("Client::builder() failed!");
 
-            let resp = client.get(URL)
+            let resp = client.get(URL_AP_ANALYSIS)
                 .header("Cookie", self.cookies.as_deref().expect("cookies not initialized"))
                 .send()
                 .await
@@ -473,11 +491,7 @@ impl FastRunner {
         }).await;
         
         // Save raw response
-        let dir = Path::new("../../../rqcore_data");
-        tokio::fs::create_dir_all(dir).await.expect("create_dir_all() failed!"); // create folder if not exists
-        let datetime_str = Local::now().format("%Y%m%dT%H%M%S").to_string();
-        let file_path: PathBuf = dir.join(format!("fast_run_ap_src_{}.json", datetime_str));
-        tokio::fs::write(&file_path, &body_text).await.expect("fs::write() failed!");
+        let file_path = Self::save_response_file("fast_run_ap_src", &body_text).await;
 
         if !body_text.contains("\"isPaywalled\":false") { // Search ""isPaywalled":false". If it can be found, then it is good. Otherwise, we get the articles, but the primaryTickers will be empty.
             log::error!("!Error. No permission, Update cookie file. See {}. Sometimes it fixes itself in next query.", file_path.display()); // we don't have to terminate the infinite Loop. The admin can update the cookie file and the next iteration will notice it.
@@ -488,11 +502,11 @@ impl FastRunner {
         }
 
         // Parse saved text as JSON
-        let ap_response: ApResponse = serde_json::from_str(&body_text).expect("serde_json::from_str() failed for ApResponse!");
+        let analysis_response: AnalysisResponse = serde_json::from_str(&body_text).expect("serde_json::from_str() failed for AnalysisResponse!");
 
         // Build a lookup for included tag items: id -> (name, company)
         let mut tag_lookup: HashMap<String, (String, String)> = HashMap::new();
-        for inc in &ap_response.included {
+        for inc in &analysis_response.included {
             if inc.type_ == "tag" {
                 if let Ok(tag_attr) = serde_json::from_value::<TagAttributes>(inc.attributes.clone()) {
                     let name = tag_attr.name.unwrap_or_default();
@@ -529,13 +543,13 @@ impl FastRunner {
 
         // Collect transactions for the specific date. AP rebalance articles (1st/15th) typically contain buy entries.
         let mut new_transaction_events: Vec<TransactionEvent> = Vec::new();
-        for article in &ap_response.data {
+        for article in &analysis_response.data {
             let publish_on = &article.attributes.publish_on; // 2025-10-15T12:00:23-04:00
             let publish_on_dateonly = &publish_on[0..10]; // extract "2025-10-15"
             if publish_on_dateonly != self.ap_json_target_date_str { // Skip if not our target date
                 continue;
             }
-            // For AP, we consider all primary tickers as "buy" events
+            // For Analysis (Articles) page, both for AP or PQP, we consider all primary tickers as "buy" events
             if let Some(rel) = &article.relationships.primary_tickers {
                 for d in &rel.data {
                     if d.type_ != "tag"
@@ -668,5 +682,92 @@ impl FastRunner {
                 known_last_price: event.price.as_deref().and_then(|s| s.parse::<f64>().ok()),
             })
             .collect()
+    }
+
+    async fn save_response_file(file_prefix: &str, body_text: &str) -> PathBuf {
+        let file_path = Path::new("../../../rqcore_data").join(format!("{}_{}.json", file_prefix, Local::now().format("%Y%m%dT%H%M%S")));
+        tokio::fs::write(&file_path, body_text).await.expect("fs::write() failed!");
+        file_path
+    }
+
+    // This Analysis finishes faster than the main Portfolio History download. PortfHistory: 400KB (first: 3800ms), Analysis: 85KB (first: 1200ms).
+    async fn get_new_transactions_from_analysis_pqp(cookies: String, target_action_date: String) -> (String, Vec<TransactionEvent>) {
+        const URL_PQP_ANALYSIS: &str = "https://seekingalpha.com/api/v3/quant_pro_portfolio/articles?include=primaryTickers%2CsecondaryTickers%2Cauthor%2CsecondaryAuthor&lang=en";
+
+        let mut body_text: String = String::new();
+        benchmark_elapsed_time_async("reqwest.Client.get() - PQP.Analysis", || async {
+            let client = reqwest::Client::builder()
+                .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                .build().expect("Client::builder() failed!");
+
+            let resp = client.get(URL_PQP_ANALYSIS)
+                .header("Cookie", &cookies)
+                .send()
+                .await
+                .expect("reqwest client.get() failed!");
+
+            body_text = resp.text().await.expect("resp.text() failed!");
+        }).await;
+
+        let file_path = Self::save_response_file("fast_run_pqp_analysis_src", &body_text).await;
+
+        if !body_text.contains("\"isPaywalled\":false") { // Search ""isPaywalled":false". If it can be found, then it is good. Otherwise, we get the articles, but the primaryTickers will be empty.
+            log::error!("!Error. No permission, Update cookie file. See {}. Sometimes it fixes itself in next query.", file_path.display()); // we don't have to terminate the infinite Loop. The admin can update the cookie file and the next iteration will notice it.
+            return (target_action_date, Vec::new());
+        } else if body_text.contains("captcha.js") {
+            log::error!("!Error. Captcha required, Update cookie file AND handle Captcha in browser. See {}", file_path.display()); // we don't have to terminate the infinite Loop. The admin can update the cookie file and the next iteration will notice it.
+            return (target_action_date, Vec::new());
+        }
+
+        // Parse saved text as JSON
+        let analysis_response: AnalysisResponse = serde_json::from_str(&body_text).expect("serde_json::from_str() failed for AnalysisResponse!");
+
+        // Build a lookup for included tag items: id -> (name, company)
+        let mut tag_lookup: HashMap<String, (String, String)> = HashMap::new();
+        for inc in &analysis_response.included {
+            if inc.type_ == "tag" {
+                if let Ok(tag_attr) = serde_json::from_value::<TagAttributes>(inc.attributes.clone()) {
+                    let name = tag_attr.name.unwrap_or_default();
+                    let company = tag_attr.company.unwrap_or_default();
+                    tag_lookup.insert(inc.id.clone(), (name, company));
+                }
+            }
+        }
+
+        // Collect transactions for the specific date. AP rebalance articles (1st/15th) typically contain buy entries.
+        let mut new_transaction_events: Vec<TransactionEvent> = Vec::new();
+        for article in &analysis_response.data {
+            let publish_on = &article.attributes.publish_on; // 2025-10-15T12:00:23-04:00
+            let publish_on_dateonly = &publish_on[0..10]; // extract "2025-10-15"
+            if publish_on_dateonly != target_action_date { // Skip if not our target date
+                continue;
+            }
+            // For Analysis (Articles) page, both for AP or PQP, we consider all primary tickers as "buy" events
+            if let Some(rel) = &article.relationships.primary_tickers {
+                for d in &rel.data {
+                    if d.type_ != "tag"
+                        { continue; }
+                    if let Some((name, company)) = tag_lookup.get(&d.id) {
+                        // name can be a non USA (Canada) stock ticker, e.g. ""name": "CLS:CA". If name contains ':', we skip it
+                        if name.contains(':')
+                            { continue; }
+                        new_transaction_events.push(TransactionEvent {
+                            transaction_id: article.id.clone(),
+                            order_type: RqOrderType::Buy,
+                            action_date: publish_on_dateonly.to_string(),
+                            ticker: name.clone(),
+                            company_name: company.clone(),
+                            starting_weight: None,
+                            new_weight: None,
+                            price: None,
+                            pos_weight: 0.0,
+                            pos_market_value: 0.0,
+                        });
+                    }
+                }
+            }
+        }
+
+        (target_action_date, new_transaction_events)
     }
 }

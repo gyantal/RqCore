@@ -64,7 +64,7 @@ impl RqTask for FastRunnerPqpTask {
              log_and_println!("{} FastRunnerPqpTask run() started", Utc::now().format("%H:%M:%S%.3f"));
 
             let mut fast_runner = FastRunner::new();
-            fast_runner.init();
+            fast_runner.init().await;
 
             let tz_et = Eastern;
             let now_et = Utc::now().with_timezone(&tz_et);
@@ -178,7 +178,7 @@ impl RqTask for FastRunnerApTask {
             log_and_println!("{} FastRunnerApTask run() started", Utc::now().format("%H:%M:%S%.3f"));
 
             let mut fast_runner = FastRunner::new();
-            fast_runner.init();
+            fast_runner.init().await;
 
             let tz_et = Eastern;
             let now_et = Utc::now().with_timezone(&tz_et);
