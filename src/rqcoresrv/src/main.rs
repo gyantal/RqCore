@@ -1,4 +1,4 @@
-use std::{sync::{Arc, OnceLock}, path::Path, env, collections::HashMap};
+use std::{collections::{HashMap, HashSet}, env, path::Path, sync::{Arc, OnceLock}};
 use tokio::{io::{self, AsyncBufReadExt}, runtime::{Handle, RuntimeFlavor}};
 use log;
 use spdlog::{prelude::*, sink::{StdStreamSink, FileSink}, formatter::{pattern, PatternFormatter}};
@@ -31,6 +31,8 @@ use crate::{
 
 // ---------- Global static variables ----------
 pub static SERVER_APP_START_TIME: OnceLock<DateTime<Utc>> = OnceLock::new();
+pub static RQCORE_CONFIG_LOCK: OnceLock<RqCoreConfig> = OnceLock::new();
+pub static AUTHORIZED_USERS_LOCK: OnceLock<HashSet<String>> = OnceLock::new();
 
 // Maybe this is the best way to handle global static. With a get_rqcore_config() supplier function, rather than accessing the global static variable directly.
 // because RQCORE_CONFIG_LOCK.get() returns an Option<T>. Even though we 'know' that it cannot be None, because we initialized it,
@@ -41,7 +43,6 @@ pub static SERVER_APP_START_TIME: OnceLock<DateTime<Utc>> = OnceLock::new();
 // Option 2: use RQCORE_CONFIG_LOCK directly. And flatten the double nested IF scopes by chaining the Options using and_then()
 // let google_api_secret= match RQCORE_CONFIG_LOCK.get().and_then(|rq_config| rq_config.get("google_api_secret_code")) {
 // Both can be used, but Option1 is more readable.
-pub static RQCORE_CONFIG_LOCK: OnceLock<RqCoreConfig> = OnceLock::new();
 
 pub fn get_rqcore_config() -> &'static RqCoreConfig {
     RQCORE_CONFIG_LOCK.get_or_init(|| {
@@ -52,6 +53,18 @@ pub fn get_rqcore_config() -> &'static RqCoreConfig {
                 HashMap::new()
             }
         }
+    })
+}
+
+pub fn get_authorized_users(cfg: &HashMap<String, String>) -> &'static HashSet<String> {
+    AUTHORIZED_USERS_LOCK.get_or_init(|| {
+        let mut users = HashSet::new();
+        for (key, value) in cfg {
+            if key.starts_with("email_") {
+                users.insert(value.clone());
+            }
+        }
+        users
     })
 }
 
@@ -357,6 +370,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>
     // Initialize the global variable RqCoreConfig now (only once), before parallel threads start to use it.
     let rqcore_cfg = get_rqcore_config();
     spdlog::info!("RqCore config loaded: {} entries", rqcore_cfg.len());
+    get_authorized_users(rqcore_cfg);
 
     let runtime_flavor = Handle::current().runtime_flavor();
     match runtime_flavor {

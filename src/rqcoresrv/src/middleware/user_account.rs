@@ -8,7 +8,7 @@ use serde::Deserialize;
 use std::collections::HashMap;
 use percent_encoding::{percent_encode, percent_decode_str, NON_ALPHANUMERIC};
 
-use crate::get_rqcore_config;
+use crate::{get_rqcore_config, AUTHORIZED_USERS_LOCK};
 // use rqcommon::utils::runningenv::{RqCoreConfig};
 
 // Steps to create Google OAuth Client ID for a web app:
@@ -227,17 +227,13 @@ pub async fn user_infor(session: Session) -> impl Responder {
 
 #[get("/useraccount/authorized_sample")]
 pub async fn authorized_sample(session: Session) -> impl Responder {
-    let cfg = get_rqcore_config();
-    let mut allowed_users: Vec<String> = Vec::new();
-
-    for (key, value) in cfg.iter() {
-        if key.starts_with("email_") {
-            allowed_users.push(value.to_string());
-        }
-    }
+    let auth_users = match AUTHORIZED_USERS_LOCK.get() {
+        Some(users) => users,
+        None => return  HttpResponse::InternalServerError().body("Server configuration error")
+    };
 
     match session.get::<String>("user_email") {
-        Ok(Some(email)) if allowed_users.contains(&email) => {
+        Ok(Some(email)) if auth_users.contains(&email) => {
             HttpResponse::Ok().body(format!("Welcome, authorized user: {}", email))
         }
         Ok(Some(email)) => {
@@ -251,6 +247,7 @@ const RQCORE_INDEX: &str = include_str!("../../static/index.html"); // compile t
 const RQCORE_NOUSER: &str = include_str!("../../static/index_nouser.html");
 const TACONITE_INDEX: &str = include_str!("../../static/taconite/index.html");
 const TACONITE_NOUSER: &str = include_str!("../../static/taconite/index_nouser.html");
+const ALLDOMAIN_USER_UNAUTHORIZED_INDEX: &str = r#"You are logged in as {email}, but your user is not <b>authorized</b>.<p>Please logout and login with another user. <a href="/useraccount/logout">Logout</a></p>"#;
 
 #[get("/")] // Without declaring it, this is also called for "/index.html", which is a standard practice.
 pub async fn root_index(http_req: HttpRequest, id: Option<Identity>, session: Session) -> impl Responder {
@@ -261,23 +258,32 @@ pub async fn root_index(http_req: HttpRequest, id: Option<Identity>, session: Se
 
     // 1. Choose which file to serve
     let (index, index_nouser) = if is_taconite {(TACONITE_INDEX, TACONITE_NOUSER)} else {(RQCORE_INDEX, RQCORE_NOUSER)};
-    let html_file = if is_logged_in { index } else { index_nouser };
-
-    let mut html = html_file.to_string();
-
-    // 2. If user is logged in -> give email
-    if id.is_some() {
-        match session.get::<String>("user_email") {
-            Ok(Some(email)) => {
-                html = html.replace("{{USER_EMAIL}}", &email);
-            }
-            Ok(None) => log::warn!("Email missing in session"),
-            Err(err) => log::error!("Session error: {}", err),
-        }
+    if !is_logged_in {
+        return HttpResponse::Ok().insert_header((header::CONTENT_TYPE, "text/html; charset=utf-8")).body(index_nouser);
     }
+    // 2. Get the email
+    let email =  match session.get::<String>("user_email") {
+        Ok(Some(email)) => email,
+        Ok(None) => {
+            log::warn!("Email missing in session");
+            return HttpResponse::Unauthorized().body("Login required");
+        }
+        Err(err) => {
+            log::error!("Session error: {}", err);
+            return HttpResponse::InternalServerError().body("Session error");
+        }
+    };
+    // 3. Get the authorized users
+    let auth_users = match AUTHORIZED_USERS_LOCK.get() {
+        Some(users) => users,
+        None => return HttpResponse::InternalServerError().body("Server configuration error"),
+    };
+    // 4. Serve the modified HTML
+    let html = if auth_users.contains(&email) {
+        index.replace("{{USER_EMAIL}}", &email)
+    } else {
+        ALLDOMAIN_USER_UNAUTHORIZED_INDEX.replace("{email}", &email)
+    };
 
-    // 3. Serve the modified HTML
-    HttpResponse::Ok()
-    .insert_header((header::CONTENT_TYPE, "text/html; charset=utf-8"))
-    .body(html)
+    HttpResponse::Ok().insert_header((header::CONTENT_TYPE, "text/html; charset=utf-8")).body(html)
 }
