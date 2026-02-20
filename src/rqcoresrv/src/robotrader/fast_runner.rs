@@ -384,6 +384,7 @@ impl FastRunner {
         }
 
         // if PortfHist doesn't give events (sometimes they update 15min later), then get the Buy entries from Analysis page (never delayed, but it only contains the Buys. Better than not trading due to 15min delay)
+        // The only way to get the Sells is to read the article, and text NLP extract from it, which is error prone and another extra step, so ignore it for now.
         if new_transaction_events.is_empty() {
             match analysis_task.await {
                 Ok(result) => return result,

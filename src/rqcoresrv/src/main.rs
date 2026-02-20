@@ -32,7 +32,8 @@ use crate::{
 // ---------- Global static variables ----------
 pub static SERVER_APP_START_TIME: OnceLock<DateTime<Utc>> = OnceLock::new();
 pub static RQCORE_CONFIG_LOCK: OnceLock<RqCoreConfig> = OnceLock::new();
-pub static AUTHORIZED_USERS_LOCK: OnceLock<HashSet<String>> = OnceLock::new();
+
+pub static EMPTY_STRING_HASHSET: OnceLock<HashSet<String>> = OnceLock::new(); // global helper for get() functions to return an empty global static.
 
 // Maybe this is the best way to handle global static. With a get_rqcore_config() supplier function, rather than accessing the global static variable directly.
 // because RQCORE_CONFIG_LOCK.get() returns an Option<T>. Even though we 'know' that it cannot be None, because we initialized it,
@@ -53,18 +54,6 @@ pub fn get_rqcore_config() -> &'static RqCoreConfig {
                 HashMap::new()
             }
         }
-    })
-}
-
-pub fn get_authorized_users(cfg: &HashMap<String, String>) -> &'static HashSet<String> {
-    AUTHORIZED_USERS_LOCK.get_or_init(|| {
-        let mut users = HashSet::new();
-        for (key, value) in cfg {
-            if key.starts_with("email_") {
-                users.insert(value.clone());
-            }
-        }
-        users
     })
 }
 
@@ -370,7 +359,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>
     // Initialize the global variable RqCoreConfig now (only once), before parallel threads start to use it.
     let rqcore_cfg = get_rqcore_config();
     spdlog::info!("RqCore config loaded: {} entries", rqcore_cfg.len());
-    get_authorized_users(rqcore_cfg);
 
     let runtime_flavor = Handle::current().runtime_flavor();
     match runtime_flavor {

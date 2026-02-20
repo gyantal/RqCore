@@ -8,7 +8,7 @@ use serde::Deserialize;
 use std::collections::HashMap;
 use percent_encoding::{percent_encode, percent_decode_str, NON_ALPHANUMERIC};
 
-use crate::{get_rqcore_config, AUTHORIZED_USERS_LOCK};
+use crate::{get_rqcore_config, main_web::{AUTHORIZED_USERS_LOCK, get_authorized_users}};
 // use rqcommon::utils::runningenv::{RqCoreConfig};
 
 // Steps to create Google OAuth Client ID for a web app:
@@ -227,10 +227,12 @@ pub async fn user_infor(session: Session) -> impl Responder {
 
 #[get("/useraccount/authorized_sample")]
 pub async fn authorized_sample(session: Session) -> impl Responder {
-    let auth_users = match AUTHORIZED_USERS_LOCK.get() {
-        Some(users) => users,
-        None => return  HttpResponse::InternalServerError().body("Server configuration error")
-    };
+    // let auth_users = match AUTHORIZED_USERS_LOCK.get() {
+    //     Some(users) => users,
+    //     None => return  HttpResponse::InternalServerError().body("Server configuration error")
+    // };
+
+    let auth_users = get_authorized_users();
 
     match session.get::<String>("user_email") {
         Ok(Some(email)) if auth_users.contains(&email) => {

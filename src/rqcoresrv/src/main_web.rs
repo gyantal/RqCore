@@ -1,4 +1,4 @@
-use std::{fs::File, io::BufReader, fmt, sync::Arc};
+use std::{collections::{HashMap, HashSet}, fmt, fs::File, io::BufReader, sync::{Arc, OnceLock}};
 use actix_files::Files;
 use actix_web::{cookie::Key, web, App, HttpServer, middleware::{from_fn, Compress, Logger}, dev::{ServerHandle}};
 use rustls::{ServerConfig, crypto::aws_lc_rs::sign::any_supported_type, pki_types::{CertificateDer, PrivateKeyDer}, server::{ClientHello, ResolvesServerCert, ResolvesServerCertUsingSni}, sign::CertifiedKey};
@@ -8,10 +8,41 @@ use actix_session::{storage::CookieSessionStore, config::PersistentSession, Sess
 
 use rqcommon::utils::runningenv::{sensitive_config_folder_path};
 use crate::{
-    RuntimeInfo,
-    middleware::{ browser_cache_control::{self}, http_request_logger::{self, HTTP_REQUEST_LOGS, HttpRequestLogs, http_request_logger_middleware}, server_diagnostics::{self}, user_account},
-    webapps::test_websocket::test_ws::test_websocket_middleware,
+    EMPTY_STRING_HASHSET, RuntimeInfo, get_rqcore_config, middleware::{ browser_cache_control::{self}, http_request_logger::{self, HTTP_REQUEST_LOGS, HttpRequestLogs, http_request_logger_middleware}, server_diagnostics::{self}, user_account}, webapps::test_websocket::test_ws::test_websocket_middleware
 };
+
+// ---------- Global static variables ----------
+
+// There are 2 ways to use OnceLock globals: (note that error handling is symbolic, as it never happens tha the lock is uninitalized)
+// Option 1: direct lock.get():  if lock is uninitialized => you handle error yourself at the place of call. 4 lines of code.
+// let auth_users = match AUTHORIZED_USERS_LOCK.get() {
+//     Some(users) => users,
+//     None => return  HttpResponse::InternalServerError().body("AUTHORIZED_USERS_LOCK is not initialized yet.")
+// };
+// Option 2: get() helper function: if lock is uninitialized => returns an empty set. 1 line of code.
+// let auth_users = get_authorized_users();
+
+pub static AUTHORIZED_USERS_LOCK: OnceLock<HashSet<String>> = OnceLock::new();
+
+// the problem of using this as a get_() is that it requires a parameter of the RqConfig. But that is only required for init(), not for get().
+// users of this only wants get_() without any RqConfig parameter.
+pub fn init_authorized_users(cfg: &HashMap<String, String>) -> () {
+    AUTHORIZED_USERS_LOCK.get_or_init(|| {
+        let mut users = HashSet::new();
+        for (key, value) in cfg {
+            if key.starts_with("email_") {
+                users.insert(value.clone());
+            }
+        }
+        users
+    });
+}
+
+pub fn get_authorized_users() -> &'static HashSet<String> {
+    AUTHORIZED_USERS_LOCK.get().unwrap_or_else(|| {
+        EMPTY_STRING_HASHSET.get_or_init(|| HashSet::new()) // AUTHORIZED_USERS_LOCK is not initialized yet. Returning empty set.
+    })
+}
 
 // SNI (Server Name Indication): the hostname sent by the client. Used for selecting HTTPS cert.
 struct SniWithDefaultFallbackResolver {
@@ -52,6 +83,9 @@ fn is_taconite_domain(ctx: &actix_web::guard::GuardContext) -> bool {
 pub fn actix_websrv_run(runtime_info: Arc<RuntimeInfo>, server_workers: usize) -> Result<(actix_web::dev::Server, ServerHandle), Box<dyn std::error::Error + Send + Sync + 'static>> {
     let cookie_encrypt_secret_key = "A key that is long enough (64 bytes) to encrypt the session cookie content"; // any encryption code that is used to encrypt the 'session' cookie content. Minimum 64 bytes.
     let runtime_info_for_server = runtime_info;
+
+    let rq_config = get_rqcore_config();
+    init_authorized_users(rq_config);
     HTTP_REQUEST_LOGS.set(Arc::new(HttpRequestLogs::new())).expect("REQUEST_LOGS already initialized");
 
     let http_listening_port = 8080;
