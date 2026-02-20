@@ -1,6 +1,14 @@
 # Design Notes
 
+## Crate hierarcy of the RqCore workspace
 
+The rqcoresrv crate uses broker-common (ib-api), that uses memdb (for MarkValueCache) that uses rqcommon (for base helpers)
+
+|       tools/*          | rqcoresrv       |
+| ---------------------- | --------------- |
+|                        | broker-common   |
+|                        | memdb           |
+|        rqcommon        | rqcommon        |
 
 ## Speed difference: RAM vs. SSD vs. Internet
 

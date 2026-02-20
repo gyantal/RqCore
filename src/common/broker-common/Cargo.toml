@@ -17,3 +17,4 @@ ibapi = "2.9.1"
 # ibapi = { version = "2.0", default-features = false, features = ["sync", "async"] }
 
 rqcommon = { path = "../rqcommon" }
+memdb = { path = "../memdb" }

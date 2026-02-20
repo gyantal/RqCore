@@ -7,7 +7,7 @@ use chrono::{Local, Utc, DateTime};
 use actix_web::dev::ServerHandle;
 use ibapi::{prelude::*, market_data::historical::WhatToShow};
 
-use rqcommon::{rqerror::RqError, utils::{rqemail::{RqEmail}, runningenv::{load_rqcore_config, RqCoreConfig}}}; // no need of mod rqcommon, broker-common as that is in Cargo.toml as a dependency.
+use rqcommon::{rqhelper::RqError, utils::{rqemail::{RqEmail}, runningenv::{load_rqcore_config, RqCoreConfig}}}; // no need of mod rqcommon, broker-common as that is in Cargo.toml as a dependency.
 use broker_common::brokers_watcher::RQ_BROKERS_WATCHER;
 
 // All compile target *.rs files in all folders should be mentioned as modules somehow.

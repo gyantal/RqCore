@@ -1,7 +1,8 @@
 use std::{fmt, sync::{Arc, LazyLock, Mutex}, env, time::Instant};
 use ibapi::prelude::*;
+use memdb::mark_value_cache::RQ_MARK_VALUE_CACHE;
 
-use rqcommon::{log_and_println, utils::server_ip::ServerIp};
+use rqcommon::{log_and_println, rqhelper::MutexExt, utils::server_ip::ServerIp};
 
 use crate::gateway::Gateway;
 
@@ -71,9 +72,14 @@ impl BrokersWatcher {
 
     pub async fn init(&self) {
         log::info!("BrokersWatcher.init() start");
+
+        let mut mark_value_cache = RQ_MARK_VALUE_CACHE.lock_ignore_poison();
+        mark_value_cache.init();
+        mark_value_cache.update();
+
         // Initialize all gateways
         let client_id = Self::gateway_client_id();
-        let mut gateways = self.gateways.lock().unwrap();
+        let mut gateways = self.gateways.lock_ignore_poison();
 
         let connection_url_dcmain = [ServerIp::sq_core_server_public_ip_for_clients(), ":", ServerIp::IB_SERVER_PORT_DCMAIN.to_string().as_str()].concat();
         let mut gateway0 = Gateway::new(&connection_url_dcmain, client_id);
@@ -87,9 +93,9 @@ impl BrokersWatcher {
     }
 
     pub async fn exit(&self) {
-        let mut gateways = self.gateways.lock().unwrap();
+        let mut gateways = self.gateways.lock_ignore_poison();
         for gateway in gateways.iter() {
-            gateway.lock().unwrap().exit().await;
+            gateway.lock_ignore_poison().exit().await;
         }
         gateways.clear();
     }
@@ -103,14 +109,40 @@ impl BrokersWatcher {
             return;
         }
 
+        { // Scope Mutex.lock() to avoid holding them for more than necessary. Good practice.
+            let mark_value_cache = RQ_MARK_VALUE_CACHE.lock_ignore_poison();
+
+            for (ticker, mark_value, mark_time) in mark_value_cache
+                .get_mark_timevalues(orders.iter().map(|order| order.ticker.as_str()))
+            {
+                log_and_println!("  MarkValue cache: {} => value: {}, time: {}", ticker, mark_value, mark_time);
+            }
+        }
+
         // Acquire and clone the ib_client handles (Arc<Client>) without holding locks across await
         let ib_client_gyantal = { // 0 is dcmain, 1 is gyantal
-            let gateways = self.gateways.lock().unwrap();
-            gateways[1].lock().unwrap().ib_client.as_ref().cloned().expect("ib_client is not initialized")
+            let gateways = self.gateways.lock_ignore_poison();
+            let Some(gateway) = gateways.get(1) else {
+                log_and_println!("BrokersWatcher.place_orders(): gyantal gateway (index 1) is missing.");
+                return;
+            };
+            let Some(client) = gateway.lock_ignore_poison().ib_client.as_ref().cloned() else {
+                log_and_println!("BrokersWatcher.place_orders(): gyantal ib_client is not initialized.");
+                return;
+            };
+            client
         };
         let ib_client_dcmain = { // 0 is dcmain, 1 is gyantal
-            let gateways = self.gateways.lock().unwrap();
-            gateways[0].lock().unwrap().ib_client.as_ref().cloned().expect("ib_client is not initialized")
+            let gateways = self.gateways.lock_ignore_poison();
+            let Some(gateway) = gateways.get(0) else {
+                log_and_println!("BrokersWatcher.place_orders(): dcmain gateway (index 0) is missing.");
+                return;
+            };
+            let Some(client) = gateway.lock_ignore_poison().ib_client.as_ref().cloned() else {
+                log_and_println!("BrokersWatcher.place_orders(): dcmain ib_client is not initialized.");
+                return;
+            };
+            client
         };
 
         // This will do a real trade. To prevent trade happening you have 3 options.
