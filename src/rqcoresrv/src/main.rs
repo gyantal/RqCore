@@ -7,7 +7,7 @@ use chrono::{Local, Utc, DateTime};
 use actix_web::dev::ServerHandle;
 use ibapi::{prelude::*, market_data::historical::WhatToShow};
 
-use rqcommon::{rqhelper::RqError, utils::{rqemail::{RqEmail}, runningenv::{load_rqcore_config, RqCoreConfig}}}; // no need of mod rqcommon, broker-common as that is in Cargo.toml as a dependency.
+use rqcommon::{rqhelper::RqError, utils::{rqemail::{RqEmail}, rqgsheets::{RqGSheets}, runningenv::{load_rqcore_config, RqCoreConfig}}}; // no need of mod rqcommon, broker-common as that is in Cargo.toml as a dependency.
 use broker_common::brokers_watcher::RQ_BROKERS_WATCHER;
 
 // All compile target *.rs files in all folders should be mentioned as modules somehow.
@@ -181,10 +181,13 @@ async fn console_menu_loop(server_handle: ServerHandle, runtime_info: Arc<Runtim
             "1" => {
                 println!("Hello. I am not crashed yet! :)");
 
-                if let Some(email_to_address) = get_rqcore_config().get("email_gyant") {
-                    RqEmail::send_html(email_to_address, "RqEmail Test", "<h1>Hello from rqcore_cfg</h1>");
-                };
-
+                // if let Some(email_to_address) = get_rqcore_config().get("email_gyant") {
+                //     RqEmail::send_html(email_to_address, "RqEmail Test", "<h1>Hello from rqcore_cfg</h1>");
+                // }
+                let url = "https://docs.google.com/spreadsheets/d/1wOY4OeoLbaYSfutiSc0elv26SVwLtBXqXnaNZ4YtggU/edit?gid=0#gid=0";
+                let cell_value = RqGSheets::get_cell(url, "C4").await.ok();
+                if let Some(value) = cell_value
+                    { println!("{}", value);}
             }
             "2" => {
                 print_runtime_info(&runtime_info);

@@ -8,7 +8,7 @@ use serde::Deserialize;
 use std::collections::HashMap;
 use percent_encoding::{percent_encode, percent_decode_str, NON_ALPHANUMERIC};
 
-use crate::{get_rqcore_config, main_web::{AUTHORIZED_USERS_LOCK, get_authorized_users}};
+use crate::{get_rqcore_config, main_web::{get_authorized_users}};
 // use rqcommon::utils::runningenv::{RqCoreConfig};
 
 // Steps to create Google OAuth Client ID for a web app:
@@ -276,10 +276,7 @@ pub async fn root_index(http_req: HttpRequest, id: Option<Identity>, session: Se
         }
     };
     // 3. Get the authorized users
-    let auth_users = match AUTHORIZED_USERS_LOCK.get() {
-        Some(users) => users,
-        None => return HttpResponse::InternalServerError().body("Server configuration error"),
-    };
+    let auth_users = get_authorized_users();
     // 4. Serve the modified HTML
     let html = if auth_users.contains(&email) {
         index.replace("{{USER_EMAIL}}", &email)
