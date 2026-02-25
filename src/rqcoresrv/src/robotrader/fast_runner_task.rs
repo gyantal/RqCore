@@ -4,9 +4,10 @@ use {
     chrono_tz::US::Eastern,
 };
 
-use rqcommon::{log_and_println, utils::{rqemail::RqEmail, time::localtimeonly2future_datetime_tz}};
+use rqcommon::{log_and_println, rqhelper::MutexExt, utils::{time::{localtimeonly2future_datetime_tz}}};
+use memdb::mark_value_cache::RQ_MARK_VALUE_CACHE;
 
-use crate::{get_rqcore_config, robotrader::fast_runner::FastRunner, services::rqtask_scheduler::RqTask};
+use crate::{robotrader::fast_runner::FastRunner, services::rqtask_scheduler::RqTask};
 
 // TODO: There is a lot of code duplication for FastRunnerPqpTask FastRunnerApTask. Unify them to FastRunnerPqpApTask or FastRunnerSaTask
 
@@ -31,10 +32,10 @@ impl FastRunnerPqpTask {
         let tz = Eastern;
         let targets_tz = [
             // NaiveTime::from_hms_opt(15, 26, 00).unwrap(), // for manual test
-            NaiveTime::from_hms_opt(9, 45, 30).unwrap(), // USA market opens at 9:30 ET, so around 9:45 ET is the earliest.
-            NaiveTime::from_hms_opt(11, 1, 30).unwrap(),
-            NaiveTime::from_hms_opt(11, 30, 30).unwrap(),
-            NaiveTime::from_hms_opt(11, 59, 30).unwrap(),
+            NaiveTime::from_hms_opt(9, 45, 10).unwrap(), // USA market opens at 9:30 ET, so around 9:45 ET is the earliest.
+            NaiveTime::from_hms_opt(11, 1, 10).unwrap(),
+            NaiveTime::from_hms_opt(11, 30, 10).unwrap(),
+            NaiveTime::from_hms_opt(11, 59, 10).unwrap(), // consider mark_value_cache warm up time, so trigger earlier
         ];
 
         targets_tz
@@ -70,7 +71,7 @@ impl RqTask for FastRunnerPqpTask {
             let now_et = Utc::now().with_timezone(&tz_et);
             let target_naive = now_et.date_naive().and_time(NaiveTime::from_hms_opt(12, 0, 0).unwrap());
             let target_et = tz_et.from_local_datetime(&target_naive).earliest().unwrap();
-            let is_live_trading_based_on_closeto_noon = (now_et - target_et).num_seconds().abs() < 55; // If current time from 12:00 ET is less than 55 seconds, then set it to true.
+            let is_live_trading_based_on_closeto_noon = (now_et - target_et).num_seconds().abs() < 90; // If current time from 12:00 ET is less than 90 seconds, then set it to true.
 
             fast_runner.is_simulation = !is_live_trading_based_on_closeto_noon;
 
@@ -85,6 +86,12 @@ impl RqTask for FastRunnerPqpTask {
             }
 
             writeln!(fast_runner.user_log, "{}: FastRunnerPqpTask run() loop started. Json target date: {}, is_simulation: {}", Utc::now().format("%H:%M:%S"), fast_runner.pqp_json_target_date_str, fast_runner.is_simulation).unwrap(); // write!() macro never panics for a String (infallible), so unwrap() is safe
+
+            { // keep the mutex lock scope as small as possible
+                let mut mark_value_cache = RQ_MARK_VALUE_CACHE.lock_ignore_poison();
+                mark_value_cache.start_quote_stream();
+            }
+            tokio::time::sleep(tokio::time::Duration::from_millis(20000)).await; // let mark_value_cache warm up for 20sec to get some rt-prices
 
             let loop_endtime = tokio::time::Instant::now()
                 + if fast_runner.is_simulation { tokio::time::Duration::from_secs(30)}
@@ -115,10 +122,20 @@ impl RqTask for FastRunnerPqpTask {
                 }
             }
             log_and_println!("{} FastRunnerPqpTask run() ended", Utc::now().format("%H:%M:%S%.3f"));
-            if let Some(email_to_address) = get_rqcore_config().get("email_gyant") {
-                // In the final stage: just send email about live trades run(), but not the previous 3x simulations (except if there was an error in simulation).
-                RqEmail::send_text(email_to_address, "RqCore: FastRunnerPqpTask run() ended", fast_runner.user_log.as_str());
+
+            { // keep the mutex lock scope as small as possible
+                let mut mark_value_cache = RQ_MARK_VALUE_CACHE.lock_ignore_poison();
+                mark_value_cache.stop_quote_stream();
             }
+
+            // if let Some(email_to_address) = get_rqcore_config().get("email_gyant") {
+            //     log_and_println!("Sending email. Might take 18 sec 'sometimes' (normally: 1-2.5sec)...(In single-threaded Tokio, Console or any messages are not handled. Investigate later: 1. We need an async RqEmail anyway (even if it is only 2 sec). 2. Why does it take 18sec)");
+            //     // In the final stage: just send email about live trades run(), but not the previous 3x simulations (except if there was an error in simulation).
+                
+            //     benchmark_elapsed_time("RqEmail::send_text()", || {
+            //         RqEmail::send_text(email_to_address, "RqCore: FastRunnerPqpTask run() ended", fast_runner.user_log.as_str());
+            //     });
+            // }
         })
     }
 }
@@ -145,10 +162,10 @@ impl FastRunnerApTask {
         let tz = Eastern;
         let targets_tz = [
             // NaiveTime::from_hms_opt(15, 26, 10).unwrap(), // for manual test
-            NaiveTime::from_hms_opt(9, 50, 30).unwrap(), // USA market opens at 9:30 ET, so around 9:45 ET is the earliest.
-            NaiveTime::from_hms_opt(11, 5, 40).unwrap(),
-            NaiveTime::from_hms_opt(11, 30, 40).unwrap(),
-            NaiveTime::from_hms_opt(11, 59, 40).unwrap(),
+            NaiveTime::from_hms_opt(9, 50, 10).unwrap(), // USA market opens at 9:30 ET, so around 9:45 ET is the earliest.
+            NaiveTime::from_hms_opt(11, 5, 20).unwrap(),
+            NaiveTime::from_hms_opt(11, 30, 20).unwrap(),
+            NaiveTime::from_hms_opt(11, 59, 20).unwrap(), // consider mark_value_cache warm up time, so trigger earlier
         ];
 
         targets_tz
@@ -184,7 +201,7 @@ impl RqTask for FastRunnerApTask {
             let now_et = Utc::now().with_timezone(&tz_et);
             let target_naive = now_et.date_naive().and_time(NaiveTime::from_hms_opt(12, 0, 0).unwrap());
             let target_et = tz_et.from_local_datetime(&target_naive).earliest().unwrap();
-            let is_live_trading_based_on_closeto_noon = (now_et - target_et).num_seconds().abs() < 55; // If current time from 12:00 ET is less than 55 seconds, then set it to true.
+            let is_live_trading_based_on_closeto_noon = (now_et - target_et).num_seconds().abs() < 90; // If current time from 12:00 ET is less than 90 seconds, then set it to true.
 
             fast_runner.is_simulation = !is_live_trading_based_on_closeto_noon;
 
@@ -199,6 +216,12 @@ impl RqTask for FastRunnerApTask {
             }
 
             writeln!(fast_runner.user_log, "{}: FastRunnerApTask run() loop started. Json target date: {}, is_simulation: {}", Utc::now().format("%H:%M:%S"), fast_runner.ap_json_target_date_str, fast_runner.is_simulation).unwrap(); // write!() macro never panics for a String (infallible), so unwrap() is safe
+
+            { // keep the mutex lock scope as small as possible
+                let mut mark_value_cache = RQ_MARK_VALUE_CACHE.lock_ignore_poison();
+                mark_value_cache.start_quote_stream();
+            }
+            tokio::time::sleep(tokio::time::Duration::from_millis(20000)).await; // let mark_value_cache warm up for 20sec to get some rt-prices
 
             let loop_endtime = tokio::time::Instant::now()
                 + if fast_runner.is_simulation { tokio::time::Duration::from_secs(30)}
@@ -223,9 +246,15 @@ impl RqTask for FastRunnerApTask {
                 }
             }
             log_and_println!("{} FastRunnerApTask run() ended", Utc::now().format("%H:%M:%S%.3f"));
-            if let Some(email_to_address) = get_rqcore_config().get("email_gyant") {
-                RqEmail::send_text(email_to_address, "RqCore: FastRunnerApTask run() ended", fast_runner.user_log.as_str());
+
+            { // keep the mutex lock scope as small as possible
+                let mut mark_value_cache = RQ_MARK_VALUE_CACHE.lock_ignore_poison();
+                mark_value_cache.stop_quote_stream();
             }
+
+            // if let Some(email_to_address) = get_rqcore_config().get("email_gyant") {
+            //     RqEmail::send_text(email_to_address, "RqCore: FastRunnerApTask run() ended", fast_runner.user_log.as_str());
+            // }
         })
     }
 }

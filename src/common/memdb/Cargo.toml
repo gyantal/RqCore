@@ -11,4 +11,12 @@ log = "0.4.29"
 chrono = { version = "0.4.43", features = ["serde"] }
 chrono-tz = "0.10.4"
 
+# yfinance-rs requires protoc.exe (ProtocolBuffer Compiler) in the PATH. Get releases from https://github.com/protocolbuffers/protobuf/releases 
+# Windows: copy manually the EXE from the ZIP to c:\Windows\System32
+# Linux: sudo apt install protobuf-compiler
+# check: protoc --version
+# Protocol Buffers - Google's platform-independent data interchange format" that convert *.proto files (yaticker.proto) to Rust 'struct'.
+yfinance-rs = "0.7.2"
+tokio = { version = "1.0", features = ["rt", "macros"] }
+
 rqcommon = { path = "../rqcommon" }

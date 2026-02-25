@@ -62,6 +62,7 @@ struct RuntimeInfo {
     logical_cpus: usize,
     server_workers: usize,
     pid: u32,
+    runtime_flavor: RuntimeFlavor,
 }
 
 // ---------- Helpers ----------
@@ -249,6 +250,12 @@ fn print_runtime_info(info: &RuntimeInfo) {
     println!("Logical CPUs:       {}", info.logical_cpus);
     println!("Actix workers:      {}", info.server_workers);
     println!("(Tokio worker pool ≈ logical CPUs, unless you customized it)");
+
+    match info.runtime_flavor {
+        RuntimeFlavor::CurrentThread => println!("Tokio/Actix runtime: current-thread (single-threaded)"),
+        RuntimeFlavor::MultiThread => println!("Tokio/Actix runtime: multi-thread"),
+        _ => println!("Tokio/Actix runtime: unknown flavor"),
+    }
 }
 
 
@@ -370,6 +377,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>
         _ => println!("Tokio/Actix runtime: unknown flavor"),
     }
 
+    // init_rustls_crypto_provider();
+    // Required by rustls 0.23 consumers (e.g. yfinance-rs / tokio-tungstenite) that rely on the process-level default CryptoProvider.
+    // Otherwise yfinance-rs Websocket stream call gives runtime error: "Could not automatically determine the process-level CryptoProvider from Rustls crate features.
+    // Call CryptoProvider::install_default() before this point to select a provider manually, or make sure exactly one of the 'aws-lc-rs' and 'ring' features is enabled."
+    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+
     init_rqemail(rqcore_cfg)?;
 
     RQ_BROKERS_WATCHER.init().await;
@@ -397,6 +410,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>
         logical_cpus,
         server_workers,
         pid: std::process::id(),
+        runtime_flavor: Handle::current().runtime_flavor()
     });
 
     let (server, server_handle) = actix_websrv_run(runtime_info.clone(), server_workers)?;

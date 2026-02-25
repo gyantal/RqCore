@@ -1,8 +1,9 @@
-use std::{fmt, sync::{Arc, LazyLock, Mutex}, env, time::Instant};
+use std::{collections::HashMap, env, fmt, sync::{Arc, LazyLock, Mutex}, time::Instant};
+use chrono::Utc;
 use ibapi::prelude::*;
-use memdb::mark_value_cache::RQ_MARK_VALUE_CACHE;
 
 use rqcommon::{log_and_println, rqhelper::MutexExt, utils::server_ip::ServerIp};
+use memdb::mark_value_cache::RQ_MARK_VALUE_CACHE;
 
 use crate::gateway::Gateway;
 
@@ -75,7 +76,6 @@ impl BrokersWatcher {
 
         let mut mark_value_cache = RQ_MARK_VALUE_CACHE.lock_ignore_poison();
         mark_value_cache.init();
-        mark_value_cache.update();
 
         // Initialize all gateways
         let client_id = Self::gateway_client_id();
@@ -109,16 +109,6 @@ impl BrokersWatcher {
             return;
         }
 
-        { // Scope Mutex.lock() to avoid holding them for more than necessary. Good practice.
-            let mark_value_cache = RQ_MARK_VALUE_CACHE.lock_ignore_poison();
-
-            for (ticker, mark_value, mark_time) in mark_value_cache
-                .get_mark_timevalues(orders.iter().map(|order| order.ticker.as_str()))
-            {
-                log_and_println!("  MarkValue cache: {} => value: {}, time: {}", ticker, mark_value, mark_time);
-            }
-        }
-
         // Acquire and clone the ib_client handles (Arc<Client>) without holding locks across await
         let ib_client_gyantal = { // 0 is dcmain, 1 is gyantal
             let gateways = self.gateways.lock_ignore_poison();
@@ -145,79 +135,107 @@ impl BrokersWatcher {
             client
         };
 
+        log_and_println!("BrokersWatcher.place_orders(): {} order(s). Simulation: {}", orders.len(), is_simulation);
+
+        let mut ticker_markvalues: HashMap<String, f64> = HashMap::new(); // This HashMap will not contain NaN. If it is NaN, we don't put in.
+        let now = Utc::now();
+        { // Scope Mutex.lock() to avoid holding them for more than necessary. Good practice.
+            let mark_value_cache = RQ_MARK_VALUE_CACHE.lock_ignore_poison();
+            for (ticker, mark_value, mark_time) in mark_value_cache.get_mark_timevalues(orders.iter().map(|order| order.ticker.as_str()))
+            {
+                log_and_println!("  MarkValue cache: {} => value: {}, time: {}", ticker, mark_value, mark_time);
+                if mark_time < now - chrono::Duration::minutes(2) {
+                    log_and_println!("  MarkValue cache: {} is stale (value: {}, time: {}). Consider improving the cache freshness or reliability.", ticker, mark_value, mark_time);
+                }
+                if !mark_value.is_nan() {
+                    ticker_markvalues.insert(ticker.to_string(), mark_value);
+                }
+            }
+        }
+
+        // 2 loops are needed for fast execution. First loop gets prices from YF cache and trades immediately.
+        // If price is not found in YF cache, it puts those orders in a 'unknown_price_orders' list to be processed in the second loop, which calls IB get_price() taking 550ms per order.
+        let mut unknown_price_orders: Vec<&RqOrder> = Vec::new();
+        for order in &orders {
+            if let Some(price) = ticker_markvalues.get(&order.ticker) { // if price is found in ticker_markvalues, then use it.
+                log_and_println!("  Using MarkValue cache price for {}: ${}", order.ticker, price);
+                BrokersWatcher::place_order(is_simulation, &ib_client_gyantal, &ib_client_dcmain, order, *price).await;
+            } else {
+                log_and_println!("  No valid MarkValue cache price for {}. Will call IB get_price() which can be slow (e.g. 550ms)...", order.ticker);
+                unknown_price_orders.push(order);
+            }
+        }
+
+        for order in &unknown_price_orders {
+            let price : f64 = BrokersWatcher::get_knownlast_or_ib_price(&ib_client_dcmain, &order.ticker, &order.company_name, order.known_last_price).await;
+            log_and_println!("  IB get_price() for {}: ${}", order.ticker, price);
+            BrokersWatcher::place_order(is_simulation, &ib_client_gyantal, &ib_client_dcmain, order, price).await;
+        }
+
+    }
+
+    async fn place_order(is_simulation: bool, ib_client_gyantal: &Arc<Client>, _ib_client_dcmain: &Arc<Client>, order: &RqOrder, price : f64) {
+        if price.is_nan() {
+            log_and_println!("  {:?} {} ({}, cannot determine price, skipping...)", order.order_type, order.ticker, order.company_name);
+            return;
+        }
+        let num_shares = (order.pos_market_value / price).floor() as i32;
+        if num_shares <= 0 {
+            log_and_println!("  {:?} {} ({}, price: ${}, nShares: {}, zero size, skipping...)", order.order_type, order.ticker, order.company_name, price, num_shares);
+            return;
+        }
+        log_and_println!("  {:?} {} ({}, price: ${}, nShares: {}, before order())", order.order_type, order.ticker, order.company_name, price, num_shares);
+        if is_simulation {
+            return;
+        }
+
         // This will do a real trade. To prevent trade happening you have 3 options.
         // 1. Comment out ib_client.order() (for both Buy/Sell) Just comment it back in when you want to trade.
         // 2. Another option to prevent trade: is_simulation bool.
         // 3. Another option to prevent trade: in IbGateway settings, check in "ReadOnly API".
-        log_and_println!("BrokersWatcher.place_orders(): {} order(s). Simulation: {}", orders.len(), is_simulation);
 
-        // TODO: if YahooFinance price cache is implemented. 2 loops are needed for fast execution. First loop gets prices from YF cache.
-        // If price is not found in YF cache, it puts those orders in a 'unknown_price_orders' list to be processed in the second loop, which calls IB get_price() taking 550ms per order.
-        for order in &orders {
-            let known_price_str = order.known_last_price.map(|p| format!("{:.4}", p)).unwrap_or_else(|| "N/A".to_string());
-            log_and_println!("  {:?} {} ({}, known_last_price: ${}, target posValue: ${}, before get_price())", order.order_type, order.ticker, order.company_name, known_price_str, order.pos_market_value);
-
-            let contract = Contract::stock(&order.ticker).build();
-            let price = Self::get_price(&ib_client_dcmain, &order.ticker, &order.company_name, order.known_last_price, &contract).await;
-            if price.is_nan() {
-                log_and_println!("  {:?} {} ({}, cannot determine price, skipping...)", order.order_type, order.ticker, order.company_name);
-                continue;
+        let contract = Contract::stock(&order.ticker).build();
+        let order_id = match order.order_type {
+            RqOrderType::Buy => {
+                ib_client_gyantal
+                    .order(&contract)
+                    .buy(num_shares)
+                    // .market()
+                    // Limit buy order at 2.1% above the price. IB rejects too-wide LMT orders.
+                    .limit(((price * 1.021) * 100.0).round() / 100.0)
+                    .submit()
+                    .await
+                    .expect("order submission failed!")
             }
-
-            let num_shares = (order.pos_market_value / price).floor() as i32;
-            if num_shares <= 0 {
-                log_and_println!("  {:?} {} ({}, price: ${}, nShares: {}, skipping...)", order.order_type, order.ticker, order.company_name, price, num_shares);
-                continue;
+            RqOrderType::Sell => {
+                ib_client_gyantal
+                    .order(&contract)
+                    .sell(num_shares)
+                    // .market()
+                    // Limit sell order at -2.1% below price
+                    .limit(((price * 0.979) * 100.0).round() / 100.0)
+                    .submit()
+                    .await
+                    .expect("order submission failed!")
             }
-
-            log_and_println!("  {:?} {} ({}, price: ${}, nShares: {}, before order())", order.order_type, order.ticker, order.company_name, price, num_shares);
-
-            if is_simulation {
-                continue;
-            }
-
-            let order_id = match order.order_type {
-                RqOrderType::Buy => {
-                    ib_client_gyantal
-                        .order(&contract)
-                        .buy(num_shares)
-                        // .market()
-                        // Limit buy order at 2.1% above the price. IB rejects too-wide LMT orders.
-                        .limit(((price * 1.021) * 100.0).round() / 100.0)
-                        .submit()
-                        .await
-                        .expect("order submission failed!")
-                }
-                RqOrderType::Sell => {
-                    ib_client_gyantal
-                        .order(&contract)
-                        .sell(num_shares)
-                        // .market()
-                        // Limit sell order at -2.1% below price
-                        .limit(((price * 0.979) * 100.0).round() / 100.0)
-                        .submit()
-                        .await
-                        .expect("order submission failed!")
-                }
-            };
-
-            log_and_println!("Order submitted: OrderID: {}, Ticker: {}, Shares: {}", order_id, contract.symbol, num_shares);
-        }
+        };
+        log_and_println!("Order submitted: OrderID: {}, Ticker: {}, Shares: {}", order_id, contract.symbol, num_shares);
     }
 
-    pub async fn get_price(ib_client_dcmain: &Arc<Client>, ticker: &str, company_name: &str, known_last_price: Option<f64>, contract: &Contract) -> f64 {
+    pub async fn get_knownlast_or_ib_price(ib_client_dcmain: &Arc<Client>, ticker: &str, company_name: &str, known_last_price: Option<f64>) -> f64 {
         if let Some(price) = known_last_price {
             if !price.is_nan() {
                 return price;
             }
         }
 
+        let contract = Contract::stock(ticker).build();
         // TODO: there is probably a better way to get the last price, e.g. via market data snapshot than streaming real-time bars.
         // Also, it only works during market hours. After market closes, it doesn't return any bars and we wait forever.
         // We ask the 5 seconds bars, but luckily the first bar comes immediately. Later new bars arrive every 5 seconds.
         let start = Instant::now();
         let mut subscription = ib_client_dcmain
-            .realtime_bars(contract, RealtimeBarSize::Sec5, RealtimeWhatToShow::Trades, TradingHours::Regular)
+            .realtime_bars(&contract, RealtimeBarSize::Sec5, RealtimeWhatToShow::Trades, TradingHours::Regular)
             .await
             .expect("realtime bars request failed!");
 

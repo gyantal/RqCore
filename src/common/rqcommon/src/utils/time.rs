@@ -2,6 +2,8 @@ use std::time::Instant;
 use chrono::{DateTime, Duration, NaiveTime, TimeZone, Utc};
 use chrono_tz::{Tz};
 
+use crate::log_and_println;
+
 pub fn localtimeonly2future_datetime_tz(tz: Tz, target_time_tz: NaiveTime) -> DateTime<Tz> { // target_time_tz (11:59) is local in the tz timezone. Use today or tommorrow, whichever is in the future.
     let now_tz = Utc::now().with_timezone(&tz);
     let today_target_tz = now_tz.date_naive().and_time(target_time_tz);
@@ -20,7 +22,8 @@ pub fn benchmark_elapsed_time(name: &str, f: impl FnOnce()) {
     let start = Instant::now();
     f();
     let elapsed_microsec = start.elapsed().as_secs_f64() * 1_000_000.0;
-    log::info!("Elapsed Time of {}: {:.2}us", name, elapsed_microsec); // TODO: no native support thousand separators in float or int. Use crate 'num-format' or 'thousands' or better: write a lightweight formatter train in RqCommon
+    log_and_println!("Elapsed Time of {}: {:.2}us", name, elapsed_microsec); // TODO: no native support thousand separators in float or int. Use crate 'num-format' or 'thousands' or better: write a lightweight formatter train in RqCommon
+    // log::info!("Elapsed Time of {}: {:.2}us", name, elapsed_microsec); // TODO: no native support thousand separators in float or int. Use crate 'num-format' or 'thousands' or better: write a lightweight formatter train in RqCommon
 }
 
 pub async fn benchmark_elapsed_time_async<F, Fut>(name: &str, f: F)
