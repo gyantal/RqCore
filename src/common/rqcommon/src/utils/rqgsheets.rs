@@ -3,6 +3,41 @@ use csv::ReaderBuilder;
 pub struct RqGSheets;
 
 impl RqGSheets {
+    pub async fn get_single_cell(url: &str, column_num: u32, row_num: u32) -> String { // column_num and row_num are expected to be 1-based indices, meaning (1,1) refers to the top-left cell of the sheet.
+        if !url.contains("export?format=csv") {
+            log::error!("Invalid URL. Please provide a Google Sheets CSV export URL (e.g:https://docs.google.com/spreadsheets/d/1wOY4OeoLbaYSfutiSc0elv26SVwLtBXqXnaNZ4YtggU/export?format=csv&gid=0).");
+            return String::new();
+        }
+
+        let resp = match reqwest::get(url).await {
+            Ok(resp) => resp,
+            Err(err) => {
+                log::error!("reqwest error: {}", err);
+                return String::new();
+            }
+        };
+
+        let csv_text = match resp.text().await {
+            Ok(text) => text,
+            Err(err) => {
+                log::error!("csv_text error : {}", err);
+                return String::new();
+            }
+        };
+
+        let mut reader = csv::ReaderBuilder::new()
+            .has_headers(false)
+            .flexible(true)
+            .from_reader(csv_text.as_bytes());
+    
+        //  Convert row_num and column_num to 0-based and get the cell value
+        if let Some(Ok(record)) = reader.records().nth((row_num - 1) as usize) { // Convert to usize because iterator::nth() and record.get() require usize indices.
+            return record.get((column_num - 1) as usize).unwrap_or("").to_string();
+        }
+
+        String::new()
+    }
+
     pub async fn get_cell(url: &str, cell: &str) -> Result<String, Box<dyn std::error::Error>> {
         let csv_export_url = Self::convert_to_csv_export_url(url);
         let gsheet_data = Self::download_google_sheet(&csv_export_url).await?;

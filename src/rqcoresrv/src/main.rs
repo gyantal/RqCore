@@ -181,14 +181,9 @@ async fn console_menu_loop(server_handle: ServerHandle, runtime_info: Arc<Runtim
         match line.trim() {
             "1" => {
                 println!("Hello. I am not crashed yet! :)");
-
-                // if let Some(email_to_address) = get_rqcore_config().get("email_gyant") {
-                //     RqEmail::send_html(email_to_address, "RqEmail Test", "<h1>Hello from rqcore_cfg</h1>");
-                // }
-                let url = "https://docs.google.com/spreadsheets/d/1wOY4OeoLbaYSfutiSc0elv26SVwLtBXqXnaNZ4YtggU/edit?gid=0#gid=0";
-                let cell_value = RqGSheets::get_cell(url, "C4").await.ok();
-                if let Some(value) = cell_value
-                    { println!("{}", value);}
+                let url = "https://docs.google.com/spreadsheets/d/1wOY4OeoLbaYSfutiSc0elv26SVwLtBXqXnaNZ4YtggU/export?format=csv&gid=0";
+                let cell_value = RqGSheets::get_single_cell(url, 2, 4).await;
+                println!("Cell Value: {}", cell_value);
             }
             "2" => {
                 print_runtime_info(&runtime_info);
