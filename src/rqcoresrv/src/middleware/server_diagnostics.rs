@@ -37,10 +37,8 @@ async fn server_diagnostics() -> impl Responder {
     let gateways = &*gateways_guard;
     write!(sb, "Total gateways: {}<br>", gateways.len()).ok();
 
-    for (idx, gw_arc) in gateways.iter().enumerate() {
-        if let Ok(gw) = gw_arc.lock() {
-            write!(sb, "Gateway {} → URL: {} | ClientID: {} | Connected: {}<br>", idx, gw.connection_url, gw.client_id, gw.ib_client.is_some()).ok();
-        }
+    for (broker_client, gateway) in gateways.iter() {
+        write!(sb, "Gateway {:?} → URL: {} | ClientID: {} | Connected: {}<br>", broker_client, gateway.connection_url, gateway.client_id, gateway.ib_client.is_some()).ok();
     }
 
     HttpResponse::Ok().content_type(ContentType::html()).body(sb)

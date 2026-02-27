@@ -1,6 +1,7 @@
 use std::{collections::HashMap, env, fmt, fmt::Write, sync::{Arc, LazyLock, Mutex}, time::Instant};
 use chrono::Utc;
 use ibapi::prelude::*;
+use ibapi::orders::{CommissionReport, ExecutionData, ExecutionFilter, Executions};
 
 use rqcommon::{log_and_println, rqhelper::MutexExt, utils::server_ip::ServerIp};
 use memdb::mark_value_cache::RQ_MARK_VALUE_CACHE;
@@ -9,6 +10,13 @@ use crate::gateway::Gateway;
 
 // ---------- Global static variables ----------
 pub static RQ_BROKERS_WATCHER: LazyLock<BrokersWatcher> = LazyLock::new(|| BrokersWatcher::new());
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum BrokerClient { // IbClient or TsClient
+    DcMain,
+    DcBlanzac,
+    Gyantal,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RqOrderType {
@@ -41,13 +49,12 @@ pub struct BrokersWatcher {
     // because 1. it can be multithreaded, or that if it contains 2 clients, those 2 clients should be accessed parallel.
     // However, it will suffice for a while. Yes. We will need the mutex at lower level later.
 
-    // gateways are Arc<Mutex<Gateway>> so each gateway can be locked independently
-    pub gateways: Mutex<Vec<Arc<Mutex<Gateway>>>>,
+    pub gateways: Mutex<HashMap<BrokerClient, Gateway>>,
 }
 
 impl BrokersWatcher {
     pub fn new() -> Self {
-        BrokersWatcher { gateways: Mutex::new(Vec::new()) }
+        BrokersWatcher { gateways: Mutex::new(HashMap::new()) }
     }
 
     pub fn gateway_client_id() -> i32 {
@@ -82,22 +89,71 @@ impl BrokersWatcher {
         let mut gateways = self.gateways.lock_ignore_poison();
 
         let connection_url_dcmain = [ServerIp::sq_core_server_public_ip_for_clients(), ":", ServerIp::IB_SERVER_PORT_DCMAIN.to_string().as_str()].concat();
-        let mut gateway0 = Gateway::new(&connection_url_dcmain, client_id);
-        gateway0.init().await;
-        gateways.push(Arc::new(Mutex::new(gateway0)));
+        let mut gateway_dcmain = Gateway::new(&connection_url_dcmain, client_id);
+        gateway_dcmain.init().await;
+        gateways.insert(BrokerClient::DcMain, gateway_dcmain);
+
+        let connection_url_dcblanzac = [ServerIp::sq_core_server_public_ip_for_clients(), ":", ServerIp::IB_SERVER_PORT_DCBLANZAC.to_string().as_str()].concat();
+        let mut gateway_dcblanzac = Gateway::new(&connection_url_dcblanzac, client_id);
+        gateway_dcblanzac.init().await;
+        gateways.insert(BrokerClient::DcBlanzac, gateway_dcblanzac);
 
         let connection_url_gyantal = [ServerIp::sq_core_server_public_ip_for_clients(), ":", ServerIp::IB_SERVER_PORT_GYANTAL.to_string().as_str()].concat();
-        let mut gateway1 = Gateway::new(&connection_url_gyantal, client_id);
-        gateway1.init().await;
-        gateways.push(Arc::new(Mutex::new(gateway1)));
+        let mut gateway_gyantal = Gateway::new(&connection_url_gyantal, client_id);
+        gateway_gyantal.init().await;
+        gateways.insert(BrokerClient::Gyantal, gateway_gyantal);
     }
 
     pub async fn exit(&self) {
         let mut gateways = self.gateways.lock_ignore_poison();
-        for gateway in gateways.iter() {
-            gateway.lock_ignore_poison().exit().await;
+        for gateway in gateways.values_mut() {
+            gateway.exit().await;
         }
         gateways.clear();
+    }
+
+    pub async fn get_order_executions(&self, broker_client: BrokerClient) -> (Vec<ExecutionData>, Vec<CommissionReport>) {
+        let ib_client = {
+            let gateways = self.gateways.lock_ignore_poison();
+            let Some(gateway) = gateways.get(&broker_client) else {
+                log::error!("BrokersWatcher.get_order_executions(): gateway is missing for {:?}.", broker_client);
+                return (Vec::new(), Vec::new());
+            };
+            let Some(client) = gateway.ib_client.as_ref().cloned() else {
+                log::error!("BrokersWatcher.get_order_executions(): ib_client is not initialized for {:?}.", broker_client);
+                return (Vec::new(), Vec::new());
+            };
+            client
+        };
+
+        // IbGateway: only gives today's executions (since midnight). No matter about the filter. 
+        // TODO: I have to test that it works for client_gyantal
+        // IbTWS: by default only today's executions. But if a user changes it to 7 days inside TWS, then it gives that.
+        let mut subscription = match ib_client.executions(ExecutionFilter::default()).await {
+            Ok(subscription) => subscription,
+            Err(e) => {
+                log::error!("BrokersWatcher.get_order_executions(): failed to request executions for {:?}: {:?}", broker_client, e);
+                return (Vec::new(), Vec::new());
+            }
+        };
+
+        let mut execution_data = Vec::new();
+        let mut commission_reports = Vec::new();
+
+        while let Some(result) = subscription.next().await {
+            match result {
+                Ok(Executions::ExecutionData(data)) => execution_data.push(data),
+                Ok(Executions::CommissionReport(report)) => commission_reports.push(report),
+                Ok(Executions::Notice(_)) => {}
+                Err(ibapi::Error::EndOfStream) => break,
+                Err(e) => {
+                    log::error!("BrokersWatcher.get_order_executions(): unexpected stream error for {:?}: {:?}", broker_client, e);
+                    break;
+                }
+            }
+        }
+
+        (execution_data, commission_reports)
     }
 
     // TODO: future features.
@@ -108,32 +164,6 @@ impl BrokersWatcher {
             log_and_println!("BrokersWatcher.place_orders(): no orders.");
             return;
         }
-
-        // Acquire and clone the ib_client handles (Arc<Client>) without holding locks across await
-        let ib_client_gyantal = { // 0 is dcmain, 1 is gyantal
-            let gateways = self.gateways.lock_ignore_poison();
-            let Some(gateway) = gateways.get(1) else {
-                log_and_println!("BrokersWatcher.place_orders(): gyantal gateway (index 1) is missing.");
-                return;
-            };
-            let Some(client) = gateway.lock_ignore_poison().ib_client.as_ref().cloned() else {
-                log_and_println!("BrokersWatcher.place_orders(): gyantal ib_client is not initialized.");
-                return;
-            };
-            client
-        };
-        let ib_client_dcmain = { // 0 is dcmain, 1 is gyantal
-            let gateways = self.gateways.lock_ignore_poison();
-            let Some(gateway) = gateways.get(0) else {
-                log_and_println!("BrokersWatcher.place_orders(): dcmain gateway (index 0) is missing.");
-                return;
-            };
-            let Some(client) = gateway.lock_ignore_poison().ib_client.as_ref().cloned() else {
-                log_and_println!("BrokersWatcher.place_orders(): dcmain ib_client is not initialized.");
-                return;
-            };
-            client
-        };
 
         log_and_println!("BrokersWatcher.place_orders(): {} order(s). Simulation: {}", orders.len(), is_simulation);
 
@@ -153,6 +183,32 @@ impl BrokersWatcher {
                 }
             }
         }
+
+        // Acquire and clone the ib_client handles (Arc<Client>) without holding locks across await
+        let ib_client_gyantal = {
+            let gateways = self.gateways.lock_ignore_poison();
+            let Some(gateway) = gateways.get(&BrokerClient::Gyantal) else {
+                log_and_println!("BrokersWatcher.place_orders(): gyantal gateway is missing.");
+                return;
+            };
+            let Some(client) = gateway.ib_client.as_ref().cloned() else {
+                log_and_println!("BrokersWatcher.place_orders(): gyantal ib_client is not initialized.");
+                return;
+            };
+            client
+        };
+        let ib_client_dcmain = {
+            let gateways = self.gateways.lock_ignore_poison();
+            let Some(gateway) = gateways.get(&BrokerClient::DcMain) else {
+                log_and_println!("BrokersWatcher.place_orders(): dcmain gateway is missing.");
+                return;
+            };
+            let Some(client) = gateway.ib_client.as_ref().cloned() else {
+                log_and_println!("BrokersWatcher.place_orders(): dcmain ib_client is not initialized.");
+                return;
+            };
+            client
+        };
 
         // 2 loops are needed for fast execution. First loop gets prices from YF cache and trades immediately.
         // If price is not found in YF cache, it puts those orders in a 'unknown_price_orders' list to be processed in the second loop, which calls IB get_price() taking 550ms per order.

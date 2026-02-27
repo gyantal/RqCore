@@ -11,6 +11,7 @@
         "rust-analyzer.rustfmt.rangeFormatting.enable": true,
         "rust-analyzer.rustfmt.extraArgs": [
             "+nightly"
-        ]
+        ],
+        "terminal.integrated.scrollback": 5000
     }
 }

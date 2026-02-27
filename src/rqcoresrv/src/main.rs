@@ -8,7 +8,7 @@ use actix_web::dev::ServerHandle;
 use ibapi::{prelude::*, market_data::historical::WhatToShow};
 
 use rqcommon::{rqhelper::RqError, utils::{rqemail::{RqEmail}, rqgsheets::{RqGSheets}, runningenv::{load_rqcore_config, RqCoreConfig}}}; // no need of mod rqcommon, broker-common as that is in Cargo.toml as a dependency.
-use broker_common::brokers_watcher::RQ_BROKERS_WATCHER;
+use broker_common::brokers_watcher::{BrokerClient, RQ_BROKERS_WATCHER};
 
 // All compile target *.rs files in all folders should be mentioned as modules somehow.
 // That is the way how only main.rs is compiled by 'cargo build', and that imports all the other .rs files as modules.
@@ -24,9 +24,9 @@ mod webapps; // refers ./webapps/mod.rs
 mod main_web; // refers main_web.rs as a module
 
 use crate::{
-    services::rqtask_scheduler::{RQ_TASK_SCHEDULER, HeartbeatTask, RqTask},
-    robotrader::fast_runner_task::{FastRunnerPqpTask, FastRunnerApTask},
     main_web::actix_websrv_run,
+    robotrader::{fast_runner_task::{FastRunnerApTask, FastRunnerPqpTask}, robo_trader::RQ_ROBO_TRADER},
+    services::rqtask_scheduler::{HeartbeatTask, RQ_TASK_SCHEDULER, RqTask}
 };
 
 // ---------- Global static variables ----------
@@ -261,11 +261,11 @@ async fn test_ibapi_hist_data() {
     // let connection_url_dcmain = "34.251.1.119:7303"; // port info is fine here. OK. Temporary anyway, and login is impossible, because there are 2 firewalls with source-IP check: AwsVm, IbTWS
     // let connection_url_gyantal = "34.251.1.119:7301";
     // let client = Client::connect(connection_url_gyantal, 99).await.expect("connection to TWS failed!");
-    let ib_client_gyantal = { // 0 is dcmain, 1 is gyantal
+    let ib_client_gyantal = {
         let gateways = RQ_BROKERS_WATCHER.gateways.lock().unwrap();
-        gateways[1]
-            .lock()
-            .unwrap()
+        gateways
+            .get(&BrokerClient::Gyantal)
+            .expect("gyantal gateway is missing")
             .ib_client
             .as_ref()
             .cloned()
@@ -297,11 +297,11 @@ async fn test_ibapi_hist_data() {
 async fn test_ibapi_realtime_bars() {
     let contract = Contract::stock("PM").build();
 
-    let ib_client_dcmain = { // 0 is dcmain, 1 is gyantal
+    let ib_client_dcmain = {
             let gateways = RQ_BROKERS_WATCHER.gateways.lock().unwrap();
-            gateways[0]
-                .lock()
-                .unwrap()
+            gateways
+                .get(&BrokerClient::DcMain)
+                .expect("dcmain gateway is missing")
                 .ib_client
                 .as_ref()
                 .cloned()
@@ -381,6 +381,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>
     init_rqemail(rqcore_cfg)?;
 
     RQ_BROKERS_WATCHER.init().await;
+    RQ_ROBO_TRADER.init().await;
 
     RQ_TASK_SCHEDULER.schedule_task(Arc::new(HeartbeatTask::new()));
     // In the future FastRunner tasks will be scheduled on Linux server only.
@@ -419,6 +420,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>
     // Keep server running
     let _server_result = server.await; // this `Result` may be an `Err` variant, which should be handled
 
+    RQ_ROBO_TRADER.exit().await;
     RQ_BROKERS_WATCHER.exit().await;
     log::info!("END RqCoreSrv"); // The OS will clean up the log file handles and flush the file when the process exits
     Ok(())

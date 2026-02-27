@@ -31,4 +31,5 @@ impl ServerIp {
     // port info is fine here. As login is impossible from other machines, because there are 2 firewalls with source-IP check: AwsVm, IbTWS
     pub const IB_SERVER_PORT_GYANTAL: u16 = 7301;
     pub const IB_SERVER_PORT_DCMAIN: u16 = 7303;
+    pub const IB_SERVER_PORT_DCBLANZAC: u16 = 7308;
 }
