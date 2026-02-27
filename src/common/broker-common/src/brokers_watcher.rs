@@ -1,4 +1,4 @@
-use std::{collections::HashMap, env, fmt, sync::{Arc, LazyLock, Mutex}, time::Instant};
+use std::{collections::HashMap, env, fmt, fmt::Write, sync::{Arc, LazyLock, Mutex}, time::Instant};
 use chrono::Utc;
 use ibapi::prelude::*;
 
@@ -103,7 +103,7 @@ impl BrokersWatcher {
     // TODO: future features.
     // BrokersWatches should access a global YahooFinance price cache, and if the price is fresh (e.g. within 1 min), then it can use that price instead of calling IB get_price() which can be slow (e.g. 1-2 seconds). 
     // This will speed up the order placing a lot, because we can avoid calling IB get_price() [550ms] for every order.
-    pub async fn place_orders(&self, orders: Vec<RqOrder>, is_simulation: bool) {
+    pub async fn place_orders(&self, orders: Vec<RqOrder>, is_simulation: bool, user_log: &mut String) {
         if orders.is_empty() {
             log_and_println!("BrokersWatcher.place_orders(): no orders.");
             return;
@@ -144,6 +144,7 @@ impl BrokersWatcher {
             for (ticker, mark_value, mark_time) in mark_value_cache.get_mark_timevalues(orders.iter().map(|order| order.ticker.as_str()))
             {
                 log_and_println!("  MarkValue cache: {} => value: {}, time: {}", ticker, mark_value, mark_time);
+                writeln!(user_log, "  MarkValue cache: {} => value: {}, time: {}", ticker, mark_value, mark_time).ok();
                 if mark_time < now - chrono::Duration::minutes(2) {
                     log_and_println!("  MarkValue cache: {} is stale (value: {}, time: {}). Consider improving the cache freshness or reliability.", ticker, mark_value, mark_time);
                 }
@@ -159,7 +160,7 @@ impl BrokersWatcher {
         for order in &orders {
             if let Some(price) = ticker_markvalues.get(&order.ticker) { // if price is found in ticker_markvalues, then use it.
                 log_and_println!("  Using MarkValue cache price for {}: ${}", order.ticker, price);
-                BrokersWatcher::place_order(is_simulation, &ib_client_gyantal, &ib_client_dcmain, order, *price).await;
+                BrokersWatcher::place_order(is_simulation, &ib_client_gyantal, &ib_client_dcmain, order, *price, user_log).await;
             } else {
                 log_and_println!("  No valid MarkValue cache price for {}. Will call IB get_price() which can be slow (e.g. 550ms)...", order.ticker);
                 unknown_price_orders.push(order);
@@ -169,22 +170,25 @@ impl BrokersWatcher {
         for order in &unknown_price_orders {
             let price : f64 = BrokersWatcher::get_knownlast_or_ib_price(&ib_client_dcmain, &order.ticker, &order.company_name, order.known_last_price).await;
             log_and_println!("  IB get_price() for {}: ${}", order.ticker, price);
-            BrokersWatcher::place_order(is_simulation, &ib_client_gyantal, &ib_client_dcmain, order, price).await;
+            BrokersWatcher::place_order(is_simulation, &ib_client_gyantal, &ib_client_dcmain, order, price, user_log).await;
         }
 
     }
 
-    async fn place_order(is_simulation: bool, ib_client_gyantal: &Arc<Client>, _ib_client_dcmain: &Arc<Client>, order: &RqOrder, price : f64) {
+    async fn place_order(is_simulation: bool, ib_client_gyantal: &Arc<Client>, _ib_client_dcmain: &Arc<Client>, order: &RqOrder, price : f64, user_log: &mut String) {
         if price.is_nan() {
             log_and_println!("  {:?} {} ({}, cannot determine price, skipping...)", order.order_type, order.ticker, order.company_name);
+            writeln!(user_log, "  {:?} {} ({}, cannot determine price, skipping...)", order.order_type, order.ticker, order.company_name).ok();
             return;
         }
         let num_shares = (order.pos_market_value / price).floor() as i32;
         if num_shares <= 0 {
             log_and_println!("  {:?} {} ({}, price: ${}, nShares: {}, zero size, skipping...)", order.order_type, order.ticker, order.company_name, price, num_shares);
+            writeln!(user_log, "  {:?} {} ({}, price: ${}, nShares: {}, zero size, skipping...)", order.order_type, order.ticker, order.company_name, price, num_shares).ok();
             return;
         }
         log_and_println!("  {:?} {} ({}, price: ${}, nShares: {}, before order())", order.order_type, order.ticker, order.company_name, price, num_shares);
+        writeln!(user_log, "  {:?} {} ({}, price: ${}, nShares: {}, before order())", order.order_type, order.ticker, order.company_name, price, num_shares).ok();
         if is_simulation {
             return;
         }

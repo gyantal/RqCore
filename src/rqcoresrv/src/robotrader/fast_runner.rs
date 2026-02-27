@@ -441,10 +441,12 @@ impl FastRunner {
         let num_new_events = new_transaction_events.len();
         if num_new_events == 0 {
             log_and_println!("No new transaction events on {}. Skipping trading.", target_action_date);
+            writeln!(self.user_log, "No new transaction events on {}. Skipping trading.", target_action_date).unwrap(); // write!() macro never panics for a String (infallible), so unwrap() is safe
             return;
         }
         if num_new_events > 14 { // The most it was 7+7 = 14 trades in the past. And even if it is correct, if there are 8 buys and 8 sells, a lot of trading that I don't want. As in this spread out suggestion, the buying pressure is not that big.
             log::warn!("Something is wrong. Don't expect more than 14 events. num_new_events: {}. Skipping trading.", num_new_events);
+            writeln!(self.user_log, "Something is wrong. Don't expect more than 14 events. num_new_events: {}. Skipping trading.", num_new_events).unwrap();
             return;
         }
 
@@ -459,7 +461,7 @@ impl FastRunner {
         }
         self.has_trading_ever_started = true;
 
-        RoboTrader::place_orders("SA_PQP", rqorders, self.is_simulation).await;
+        RoboTrader::place_orders("SA_PQP", rqorders, self.is_simulation, &mut self.user_log).await;
     }
 
     // >2026-02-17: They updated the AP.Analysis tabpage at 12:00, but there was no TickerList tag in it
@@ -612,10 +614,12 @@ impl FastRunner {
         let num_new_events = new_transaction_events.len();
         if num_new_events == 0 {
             log_and_println!("No new transaction events on {}. Skipping trading.", target_action_date);
+            writeln!(self.user_log, "No new transaction events on {}. Skipping trading.", target_action_date).unwrap(); // write!() macro never panics for a String (infallible), so unwrap() is safe
             return;
         }
         if num_new_events > 2 { // There should be 1 new buy per rebalance.
             log::warn!("Something is wrong. Don't expect more than 1-2 events. num_new_events: {}. Skipping trading.", num_new_events);
+            writeln!(self.user_log, "Something is wrong. Don't expect more than 1-2 events. num_new_events: {}. Skipping trading.", num_new_events).unwrap();
             return;
         }
 
@@ -630,7 +634,7 @@ impl FastRunner {
         }
         self.has_trading_ever_started = true;
 
-        RoboTrader::place_orders("SA_AP", rqorders, self.is_simulation).await;
+        RoboTrader::place_orders("SA_AP", rqorders, self.is_simulation, &mut self.user_log).await;
     }
 
     // ---------- Helpers ----------

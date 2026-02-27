@@ -21,12 +21,12 @@ pub struct RoboTrader {
 }
 
 impl RoboTrader {
-    pub async fn place_orders(strategy_name: &str, orders: Vec<RqOrder>, is_simulation: bool) {
+    pub async fn place_orders(strategy_name: &str, orders: Vec<RqOrder>, is_simulation: bool, user_log: &mut String) {
         if orders.is_empty() {
             log_and_println!("RoboTrader.place_orders({}): no orders.", strategy_name);
             return;
         }
 
-        RQ_BROKERS_WATCHER.place_orders(orders, is_simulation).await;
+        RQ_BROKERS_WATCHER.place_orders(orders, is_simulation, user_log).await;
     }
 }

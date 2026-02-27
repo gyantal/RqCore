@@ -4,10 +4,10 @@ use {
     chrono_tz::US::Eastern,
 };
 
-use rqcommon::{log_and_println, rqhelper::MutexExt, utils::{time::{localtimeonly2future_datetime_tz}}};
+use rqcommon::{log_and_println, rqhelper::MutexExt, utils::{rqemail::RqEmail, time::localtimeonly2future_datetime_tz}};
 use memdb::mark_value_cache::RQ_MARK_VALUE_CACHE;
 
-use crate::{robotrader::fast_runner::FastRunner, services::rqtask_scheduler::RqTask};
+use crate::{get_rqcore_config, robotrader::fast_runner::FastRunner, services::rqtask_scheduler::RqTask};
 
 // TODO: There is a lot of code duplication for FastRunnerPqpTask FastRunnerApTask. Unify them to FastRunnerPqpApTask or FastRunnerSaTask
 
@@ -128,14 +128,17 @@ impl RqTask for FastRunnerPqpTask {
                 mark_value_cache.stop_quote_stream();
             }
 
-            // if let Some(email_to_address) = get_rqcore_config().get("email_gyant") {
-            //     log_and_println!("Sending email. Might take 18 sec 'sometimes' (normally: 1-2.5sec)...(In single-threaded Tokio, Console or any messages are not handled. Investigate later: 1. We need an async RqEmail anyway (even if it is only 2 sec). 2. Why does it take 18sec)");
-            //     // In the final stage: just send email about live trades run(), but not the previous 3x simulations (except if there was an error in simulation).
-                
-            //     benchmark_elapsed_time("RqEmail::send_text()", || {
-            //         RqEmail::send_text(email_to_address, "RqCore: FastRunnerPqpTask run() ended", fast_runner.user_log.as_str());
-            //     });
-            // }
+            if let Some(email_to_address) = get_rqcore_config().get("email_gyant") {
+                log_and_println!("Sending email. Might take 18 sec 'sometimes' (normally: 1-2.5sec)...(In single-threaded Tokio, Console or any messages are not handled. Investigate later: 1. We need an async RqEmail anyway (even if it is only 2 sec). 2. Why does it take 18sec)");
+                // In the final stage: just send email about live trades run(), but not the previous 3x simulations (except if there was an error in simulation).
+
+                let start = tokio::time::Instant::now();
+                if let Err(err) = RqEmail::send_text(email_to_address, "RqCore: FastRunnerPqpTask run() ended", fast_runner.user_log.as_str()).await {
+                    log_and_println!("RqEmail::send_text() failed: {}", err);
+                } else {
+                    log_and_println!("Elapsed Time of RqEmail::send_text(): {:.2}us", start.elapsed().as_secs_f64() * 1_000_000.0);
+                }
+            }
         })
     }
 }
@@ -252,9 +255,14 @@ impl RqTask for FastRunnerApTask {
                 mark_value_cache.stop_quote_stream();
             }
 
-            // if let Some(email_to_address) = get_rqcore_config().get("email_gyant") {
-            //     RqEmail::send_text(email_to_address, "RqCore: FastRunnerApTask run() ended", fast_runner.user_log.as_str());
-            // }
+            if let Some(email_to_address) = get_rqcore_config().get("email_gyant") {
+                let start = tokio::time::Instant::now();
+                if let Err(err) = RqEmail::send_text(email_to_address, "RqCore: FastRunnerPqpTask run() ended", fast_runner.user_log.as_str()).await {
+                    log_and_println!("RqEmail::send_text() failed: {}", err);
+                } else {
+                    log_and_println!("Elapsed Time of RqEmail::send_text(): {:.2}us", start.elapsed().as_secs_f64() * 1_000_000.0);
+                }
+            }
         })
     }
 }
