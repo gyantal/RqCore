@@ -1,6 +1,7 @@
-use actix_web::{get, HttpResponse, Responder, http::header::ContentType};
-use chrono::{Utc};
 use std::{fmt::Write};
+use chrono::{Utc};
+use actix_web::{get, HttpResponse, Responder, http::header::ContentType};
+
 use broker_common::brokers_watcher::RQ_BROKERS_WATCHER;
 use crate::{SERVER_APP_START_TIME};
 

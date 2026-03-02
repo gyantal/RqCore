@@ -1,8 +1,7 @@
+use std::{collections::VecDeque, fmt::Write, net::IpAddr, sync::{Arc, Mutex, OnceLock}};
+use chrono::{DateTime, Utc};
 use actix_session::SessionExt;
 use actix_web::{body::MessageBody, dev::{ServiceRequest, ServiceResponse}, get, middleware::Next, Error, HttpResponse,};
-use chrono::{DateTime, Utc};
-use std::{collections::VecDeque, fmt::Write, net::IpAddr, sync::Mutex,};
-use std::{sync::{Arc, OnceLock}};
 
 pub static HTTP_REQUEST_LOGS: OnceLock<Arc<HttpRequestLogs>> = OnceLock::new();
 

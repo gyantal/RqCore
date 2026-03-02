@@ -1,13 +1,11 @@
-use actix_web::{ get, HttpRequest, HttpResponse, Responder, http::header,};
-use actix_web::web::Query;
+use std::collections::HashMap;
 use actix_identity::Identity;
 use actix_session::Session;
-use actix_web::{HttpMessage};
+use actix_web::{get, http::header, web::Query, HttpMessage, HttpRequest, HttpResponse, Responder};
 use reqwest::Client;
 use serde::Deserialize;
-use std::collections::HashMap;
-use percent_encoding::{percent_encode, percent_decode_str, NON_ALPHANUMERIC};
 
+use percent_encoding::{percent_encode, percent_decode_str, NON_ALPHANUMERIC};
 use crate::{get_rqcore_config, main_web::{get_authorized_users}};
 // use rqcommon::utils::runningenv::{RqCoreConfig};
 
