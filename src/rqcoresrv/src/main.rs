@@ -25,7 +25,7 @@ mod main_web; // refers main_web.rs as a module
 
 use crate::{
     main_web::actix_websrv_run,
-    robotrader::{fast_runner_task::{FastRunnerApTask, FastRunnerPqpTask}, robo_trader::RQ_ROBO_TRADER},
+    robotrader::{fast_runner_task::{FastRunnerApTask, FastRunnerPqpTask}, robotrader::RQ_ROBO_TRADER},
     services::rqtask_scheduler::{HeartbeatTask, RQ_TASK_SCHEDULER, RqTask}
 };
 

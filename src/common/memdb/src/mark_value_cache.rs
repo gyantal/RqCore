@@ -32,8 +32,11 @@ pub struct MarkValueCache {
 impl MarkValueCache {
     pub fn new() -> Self {
         Self {
+            // When 65 tickers was given to YF websocket, in 20 seconds, 58 unique tickers received prices (which is OK, because if there is no trade, then no update is given).
+            // So, if there is a YF limit for the number of tickers, it is greater than 60
             // collect tickers. Potential Sells from SA Portfolio page. Potential Buys from Balazs.
-            ticker_universe_csv: "ARREF,NESR,ORLA,IRS,CSTM,ALGT,SUHJY,NOAH,LASR,FXC,NLCP,FRO,STTK,EGO,RY,GM,FN,AIR,CRDO,PRE,CIEN,GRAL,PARR".to_string(),
+            // ticker_universe_csv: "ARREF,NESR,ORLA,IRS,CSTM,ALGT,SUHJY,NOAH,LASR,FXC,NLCP,FRO,STTK,EGO,RY,GM,FN,AIR,CRDO,PRE,CIEN,GRAL,PARR".to_string(), // 2026-02-23 (23)
+            ticker_universe_csv: "LQDA,DTEGY,KGC,NATR,VFF,NESR,NEXA,IRS,SPHR,ORLA,LUV,RFIL,DRD,PSTL,CSTM,ALGT,SUHJY,ENLAY,EGO,ALPMY,AIR,SDVKY,BBVA,BOLSY,NLCP,LYG,TKC,MT,FN,BBSEY,IBDRY,NTIOF,CTRN,DELL,KNOP,ICR,TRX,ICHR,INNV,SNEX,SHIP,DHT,KMT,DAN,EZPW,LITE,NGD,SBSW,IAG,CGAU,AU,CRDO,DB,RY,CLS,CM,ENVA,PNC,IVZ,AMD,FHN,KEY,MFC,TSEM,CUBI".to_string(), // 2026-03-02 (65)
             mark_timevalues: HashMap::new(),
             quote_stream_task: None,
             quote_stream_users: 0,
