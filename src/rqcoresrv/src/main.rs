@@ -144,6 +144,26 @@ fn init_rqemail(rqcore_cfg: &'static RqCoreConfig) -> Result<(), Box<dyn std::er
     Ok(())
 }
 
+fn init_rqgsheets(rqcore_cfg: &'static RqCoreConfig) -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>> {
+    let gsheet_client_email: String = match rqcore_cfg.get("gsheet_client_email") {
+        Some(value) => value.to_string(),
+        None => {
+            log::error!("gsheet_client_email not found in config");
+            return Err(RqError::Config("gsheet_client_email not found in config".to_string()).into());
+        }
+    };
+    let gsheet_private_key: String = match rqcore_cfg.get("gsheet_private_key") {
+        // Replace escaped "\n" from config (stored as a single-line string) with real newline characters because the PEM private key parser requires actual line breaks
+        Some(value) => value.replace("\\n", "\n"),
+        None => {
+            log::error!("gsheet_private_key not found in config");
+            return Err(RqError::Config("gsheet_private_key not found in config".to_string()).into());
+        }
+    };
+    RqGSheets::init(&gsheet_client_email, &gsheet_private_key);
+    Ok(())
+}
+
 async fn console_menu_loop(server_handle: ServerHandle, runtime_info: Arc<RuntimeInfo>) {
     let stdin = io::stdin();
     let mut lines = io::BufReader::new(stdin).lines();
@@ -181,9 +201,12 @@ async fn console_menu_loop(server_handle: ServerHandle, runtime_info: Arc<Runtim
         match line.trim() {
             "1" => {
                 println!("Hello. I am not crashed yet! :)");
-                let url = "https://docs.google.com/spreadsheets/d/1wOY4OeoLbaYSfutiSc0elv26SVwLtBXqXnaNZ4YtggU/export?format=csv&gid=0";
-                let cell_value = RqGSheets::get_single_cell(url, 2, 4).await;
-                println!("Cell Value: {}", cell_value);
+                // let url = "https://docs.google.com/spreadsheets/d/1wOY4OeoLbaYSfutiSc0elv26SVwLtBXqXnaNZ4YtggU/export?format=csv&gid=0";
+                // let cell_value = RqGSheets::get_single_cell(url, 2, 4).await;
+                // println!("Cell Value: {}", cell_value);
+                let url = "https://docs.google.com/spreadsheets/d/1ekratdOIuw0slglsiilzSGXE-eehXjLSeuysjITSJUI/edit?gid=0#gid=0";
+                let res = RqGSheets::set_single_cell(url, 1, 2, "Insert Value").await;
+                println!("result:{:?}", res);
             }
             "2" => {
                 print_runtime_info(&runtime_info);
@@ -379,6 +402,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>
     let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
 
     init_rqemail(rqcore_cfg)?;
+    init_rqgsheets(rqcore_cfg)?;
 
     RQ_BROKERS_WATCHER.init().await;
     RQ_ROBO_TRADER.init().await;
