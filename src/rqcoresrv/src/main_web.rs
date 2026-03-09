@@ -8,7 +8,7 @@ use actix_session::{storage::CookieSessionStore, config::PersistentSession, Sess
 
 use rqcommon::utils::runningenv::{sensitive_config_folder_path};
 use crate::{
-    EMPTY_STRING_HASHSET, RuntimeInfo, get_rqcore_config, middleware::{ browser_cache_control::{self}, http_request_logger::{self, HTTP_REQUEST_LOGS, HttpRequestLogs, http_request_logger_middleware}, server_diagnostics::{self}, user_account}, webapps::test_websocket::test_ws::test_websocket_middleware
+    EMPTY_STRING_HASHSET, RuntimeInfo, get_rqcore_config, middleware::{ browser_cache_control::{self}, http_request_logger::{self, HTTP_REQUEST_LOGS, HttpRequestLogs, http_request_logger_middleware}, server_diagnostics::{self}, user_account}, webapps::{test_websocket::test_ws::test_websocket_middleware, robotrader_ui::robotrader_ui::robotrader_websocket}
 };
 
 // ---------- Global static variables ----------
@@ -185,6 +185,7 @@ pub fn actix_websrv_run(runtime_info: Arc<RuntimeInfo>, server_workers: usize) -
             .service(server_diagnostics::server_diagnostics)
             .service(http_request_logger::http_request_activity_log)
             .service(test_websocket_middleware)
+            .service(robotrader_websocket)
         // We can serve many domains, each having its own subfolder in ./static/
         // However, when we rewritten path in a middleware (from /index.html to /taconite/index.html), it was not being used by Actix Files
         // Because the main Actix -Files service is mounted at the root "/" and doesn't know (?) how to handle the "/taconite" prefix. 
