@@ -1,0 +1,39 @@
+.header {
+    background-color: rgb(32, 34, 148);
+    border-radius: 4px;
+    padding: 12px 20px;
+    display: flex;
+    align-items: center;
+}
+.title {
+    color: white;
+    font-size: 32px;
+    font-weight: bold;
+    margin-right: 30px;
+    text-align: center;
+}
+.robotrader_tabs {
+    background-color: #f3f6fa;
+    border-radius: 4px;
+    font-weight: bold;
+    color: #155bb5;
+    padding: 10px 18px;
+    margin-right: 6px;
+    cursor: pointer;
+}
+.robotrader_tabs:hover {
+    background-color: #b56a15;
+    color: white;
+}
+.user_status {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-left: auto;
+}
+#user_email {
+    color: white;
+}
+#wifi_icon {
+    fill: green;
+}
