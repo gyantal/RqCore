@@ -5,8 +5,10 @@ use std::sync::{Mutex, MutexGuard, PoisonError};
 // For that you define your own error type (often an enum) and implement the std::error::Error trait for it.
 #[derive(Debug)]
 pub enum RqError { // In the future, define more different error variants as needed
+    General(String),
     Config(String), // Configuration-related errors with a message
     Io(std::io::Error), // Wraps std::io::Error for IO-related issues
+    ArgumentInvalid(String), // For null, invalid characters, wrong formats etc..
 }
 
 impl std::error::Error for RqError {} // this is the key: our own error type implements the std::error::Error trait
@@ -14,8 +16,10 @@ impl std::error::Error for RqError {} // this is the key: our own error type imp
 impl std::fmt::Display for RqError {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
+            RqError::General(msg) => write!(f, "General error: {}", msg),
             RqError::Config(msg) => write!(f, "Configuration error: {}", msg),
             RqError::Io(err) => write!(f, "IO error: {}", err),
+            RqError::ArgumentInvalid(msg) => write!(f, "ArgumentInvalid: {}", msg),
         }
     }
 }

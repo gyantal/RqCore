@@ -4,6 +4,8 @@ use csv::ReaderBuilder; // for reading the gsheets data
 use google_sheets4::{api::ValueRange, hyper_rustls::HttpsConnectorBuilder, hyper_util::{client::legacy::Client, rt::TokioExecutor}, Sheets,}; // for write/modify the gsheet
 use yup_oauth2::{ServiceAccountAuthenticator, ServiceAccountKey};
 
+use crate::rqhelper::RqError;
+
 // Steps to create Google Sheets Service Account:
 // 1. Go to https://console.cloud.google.com
 // 2. Create new project (or use existing)
@@ -43,7 +45,7 @@ impl RqGSheets {
             Some(cfg) => cfg,
             None => {
                 log::error!("RqGsheets not initialized");
-                return Err(std::io::Error::other("RqGsheets not initialized").into());
+                return Err(RqError::Config("RqGsheets not initialized".to_string()).into());
             }
         };
         // Build Service Account Key
@@ -66,29 +68,17 @@ impl RqGSheets {
                 .and_then(|s| s.split('/').next())
                 .ok_or_else(|| {
                 log::error!("Invalid Google Sheets URL");
-                std::io::Error::other("Invalid Google Sheets URL")
+                RqError::ArgumentInvalid("Invalid Google Sheets URL".to_string())
             })?;
         // Build Authenticator
-        let service_account_authenticator = ServiceAccountAuthenticator::builder(service_account_key)
-            .build()
-            .await?;
+        let service_account_authenticator = ServiceAccountAuthenticator::builder(service_account_key).build().await?;
         // Build HTTP Transport
-        let https_transport = HttpsConnectorBuilder::new()
-            .with_native_roots()?
-            .https_or_http()
-            .enable_http1()
-            .build();
-
-        let http_client = Client::builder(TokioExecutor::new())
-            .build(https_transport);
+        let https_transport = HttpsConnectorBuilder::new().with_native_roots()?.https_or_http().enable_http1().build();
+        let http_client = Client::builder(TokioExecutor::new()).build(https_transport);
         // Create Google Sheets API Client
         let sheets_api_client = Sheets::new(http_client, service_account_authenticator);
         // Update Cell Value
-        sheets_api_client.spreadsheets()
-            .values_update(update_value_range, &spreadsheet_id, &range)
-            .value_input_option("USER_ENTERED")
-            .doit()
-            .await?;
+        sheets_api_client.spreadsheets().values_update(update_value_range, &spreadsheet_id, &range).value_input_option("USER_ENTERED").doit().await?;
     
         Ok(())
     }
