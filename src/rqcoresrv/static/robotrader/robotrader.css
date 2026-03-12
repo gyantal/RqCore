@@ -21,8 +21,11 @@
     margin-right: 6px;
     cursor: pointer;
 }
-.robotrader_tabs:hover {
+.robotrader_tabs.active {
     background-color: #b56a15;
+    color: white;
+}
+#ticker_div {
     color: white;
 }
 .user_status {
