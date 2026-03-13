@@ -126,7 +126,15 @@ impl BrokersWatcher {
             client
         };
 
-        // IbGateway: only gives today's executions (since midnight). No matter about the filter. 
+        // IbGateway: only gives today's executions (since midnight). No matter about the filter. And no matter whether in TWS it is 7-days selected.
+        // The TWS user has to actively open the Trades dialog in TWS to fetch the 7-days executions. 
+        // Tested. In TWS, Trades is in last 4-days as default. But TWS doesn't give the old orders, only the today ones.
+        // After manually opening the Trades dialog in TWS, and doing nothing, then TWS gives previous days too.
+        // Sad, but it could be enough for daily RoboTrader work.
+        // Usually, Robotrader only needs today trades after MOC.
+        // If Robotrader need previous day trades, 2 options:
+        // Option 1: a user manually should Open TWS's Trades dialog.
+        // Option 2: collect trades 30min after MOC daily, then store it in RedisDb. That way, we can have the historical trades.
         // TODO: I have to test that it works for client_gyantal
         // IbTWS: by default only today's executions. But if a user changes it to 7 days inside TWS, then it gives that.
         let mut subscription = match ib_client.executions(ExecutionFilter::default()).await {

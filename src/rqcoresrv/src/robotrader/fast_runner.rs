@@ -1,6 +1,6 @@
 use chrono::{Datelike, Local, Utc};
 use serde::Deserialize;
-use std::{fmt::Write, collections::HashMap, fs, path::{Path, PathBuf}, time::{SystemTime}};
+use std::{fmt::Write, collections::{HashMap, HashSet}, fs, path::{Path, PathBuf}, time::{SystemTime}};
 use rqcommon::{log_and_println, log_and_if_println, utils::time::{benchmark_elapsed_time_async}};
 
 use broker_common::brokers_watcher::{RqOrder, RqOrderType};
@@ -79,6 +79,43 @@ pub struct StockAttributes {
     pub name: String,
     #[serde(rename = "companyName")]
     pub company_name: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SaScreenerResponse {
+    pub data: Vec<Stock>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct PqpPositionsResponse {
+    pub data: Vec<PqpPosition>,
+    pub included: Vec<PqpIncludedItem>,
+}
+
+#[derive(Debug, Deserialize)]
+#[allow(dead_code)]
+pub struct PqpPosition {
+    pub id: String,
+    #[serde(rename = "type")]
+    pub type_: String,
+    pub relationships: TransactionRelationships,
+}
+
+#[derive(Debug, Deserialize)]
+#[allow(dead_code)]
+pub struct PqpIncludedItem {
+    pub id: String,
+    #[serde(rename = "type")]
+    pub type_: String,
+    pub attributes: Option<PqpIncludedAttributes>,
+}
+
+#[derive(Debug, Deserialize)]
+#[allow(dead_code)]
+pub struct PqpIncludedAttributes {
+    pub name: Option<String>,
+    #[serde(rename = "companyName")]
+    pub company_name: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -693,6 +730,136 @@ impl FastRunner {
         let file_path = Path::new("../../../rqcore_data").join(format!("{}_{}.json", file_prefix, Local::now().format("%Y%m%dT%H%M%S")));
         tokio::fs::write(&file_path, body_text).await.expect("fs::write() failed!");
         file_path
+    }
+
+    // To get the CURL (bash) that works on Linux, use Chrome DevTools, right click the request, Copy -> Copy as cURL (bash).
+    // The Windows version of the cURL contains some extra escaping that doesn't work on Linux. Here is the Windows 1-line version:
+    // curl "https://seekingalpha.com/api/v3/screener_results" -H "accept: application/json" -H "accept-language: en-GB,en;q=0.9,hu-HU;q=0.8,hu;q=0.7,en-US;q=0.6,la;q=0.5" -H "content-type: application/json" -b "<INSERT-COOKIE-HERE>" -H "origin: https://seekingalpha.com" -H "priority: u=1, i" -H "referer: https://seekingalpha.com/screeners/95beb727bcef-FrontRun-PQP" -H "sec-ch-ua: \"Not:A-Brand\";v=\"99\", \"Google Chrome\";v=\"145\", \"Chromium\";v=\"145\"" -H "sec-ch-ua-mobile: ?0" -H "sec-ch-ua-platform: \"Windows\"" -H "sec-fetch-dest: empty" -H "sec-fetch-mode: cors" -H "sec-fetch-site: same-origin" -H "user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36" --data-raw "{\"filter\":{\"quant_rating\":{\"in\":[\"strong_buy\"]},\"quant_rating_days\":{\"in\":[{\"gte\":25}]}},\"page\":1,\"per_page\":100,\"sort\":null,\"total_count\":true,\"type\":\"stock\"}" > screener_results.json
+    pub async fn get_sa_url_json(url: &str, is_post: bool, post_payload_body: &str) -> String {
+        let cookies = match fs::read_to_string(Self::COOKIES_FILE_PATH) {
+            Ok(content) => content.trim().to_string(),
+            Err(err) => {
+                log::warn!("Failed to read cookies file for SA request: {}", err);
+                return String::new();
+            }
+        };
+
+        let client = match reqwest::Client::builder()
+            .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36")
+            .build()
+        {
+            Ok(client) => client,
+            Err(err) => {
+                log::warn!("Failed to build direct reqwest client for SA request: {}", err);
+                return String::new();
+            }
+        };
+
+        let mut request = client
+            .request(if is_post { reqwest::Method::POST } else { reqwest::Method::GET }, url)
+            .header("accept", "application/json")
+            .header("accept-language", "en-GB,en;q=0.9,hu-HU;q=0.8,hu;q=0.7,en-US;q=0.6,la;q=0.5")
+            .header("origin", "https://seekingalpha.com")
+            .header("priority", "u=1, i")
+            .header("referer", "https://seekingalpha.com/screeners/95beb727bcef-FrontRun-PQP")
+            .header("sec-ch-ua", "\"Not:A-Brand\";v=\"99\", \"Google Chrome\";v=\"145\", \"Chromium\";v=\"145\"")
+            .header("sec-ch-ua-mobile", "?0")
+            .header("sec-ch-ua-platform", "\"Windows\"")
+            .header("sec-fetch-dest", "empty")
+            .header("sec-fetch-mode", if is_post { "cors" } else { "navigate" })
+            .header("sec-fetch-site", "same-origin")
+            .header("Cookie", cookies);
+
+        if is_post {
+            request = request
+                .header("content-type", "application/json")
+                .body(post_payload_body.to_string());
+        }
+
+        let resp = match request.send().await {
+            Ok(resp) => resp,
+            Err(err) => {
+                let method = if is_post { "POST" } else { "GET" };
+                log::warn!("Direct SA {} request failed for {}: {}", method, url, err);
+                return String::new();
+            }
+        };
+
+        match resp.text().await {
+            Ok(text) => text,
+            Err(err) => {
+                log::warn!("Failed to read direct SA response body for {}: {}", url, err);
+                String::new()
+            }
+        }
+    }
+
+    pub async fn get_sa_screener_result_tickers(screener_request_body: &str) -> Vec<String> {
+        let body_text = Self::get_sa_url_json("https://seekingalpha.com/api/v3/screener_results", true, screener_request_body).await;
+        if body_text.is_empty() {
+            return Vec::new();
+        }
+
+        let screener_response: SaScreenerResponse = match serde_json::from_str(&body_text) {
+            Ok(response) => response,
+            Err(err) => {
+                log::warn!("Failed to parse SA screener response JSON: {}", err);
+                return Vec::new();
+            }
+        };
+
+        screener_response.data.into_iter().map(|stock| stock.attributes.name).filter(|ticker| !ticker.is_empty()).collect()
+    }
+
+    pub async fn get_pqp_positions_tickers() -> Vec<String> {
+        let body_text = Self::get_sa_url_json("https://seekingalpha.com/api/v3/quant_pro_portfolio/positions?filter_by%5Bclosed%5D=false&include=ticker%2Cticker.sector%2Cticker.tickerMetrics%2Cticker.tickerMetrics.metricType&page%5Bsize%5D=1000&page%5Bnumber%5D=1&sort=undefined", false, "").await;
+        if body_text.is_empty() {
+            return Vec::new();
+        }
+        // std::fs::write("c:/downloads/sa_pqp_positions.json", body_text).expect("Unable to write file");
+
+        let positions_response: PqpPositionsResponse = match serde_json::from_str(&body_text) {
+            Ok(response) => response,
+            Err(err) => {
+                log::warn!("Failed to parse PQP positions response JSON: {}", err);
+                return Vec::new();
+            }
+        };
+
+        // Create a HashMap<id, ticker> for the type="ticker" items
+        let ticker_lookup: HashMap<String, String> = positions_response
+            .included.into_iter().filter_map(|item| {
+                if item.type_ != "ticker" {
+                    return None;
+                }
+
+                let name = item.attributes?.name?;
+                if name.is_empty() {
+                    return None;
+                }
+
+                Some((item.id, name))
+            }).collect();
+
+        positions_response.data.into_iter().filter_map(|position| ticker_lookup.get(&position.relationships.ticker.data.id).cloned()).collect()
+    }
+
+    pub async fn get_sa_candidate_tickers(/* PQP or AP */) -> (Vec<String>, Vec<String>) {
+        // If PQP is selected, we also have to add the Sell candidates.
+
+        // QR is usually updated about 3hours before market open, but definitely it is updated until market opens at 9:30ET.
+
+        // "sort":null in the filter actually gives it in QR order. So, because for PQP we want above 4.8 QR stocks, we can estimate and take the top half. Otherwise, there is a https://.../metrics? query that can be used to get the QR values.
+        let sa_screener_tickers_all = FastRunner::get_sa_screener_result_tickers(r#"{"filter":{"quant_rating":{"in":["strong_buy"]},"quant_rating_days":{"in":[{"gte":25}]}},"page":1,"per_page":200,"sort":null,"total_count":true,"type":"stock"}"#).await;
+        let top_half_len = sa_screener_tickers_all.len() / 2;
+        let sa_screener_tickers_top_half = sa_screener_tickers_all.into_iter().take(top_half_len).collect::<Vec<_>>();
+
+        // Get the tickers that is already in the PQP/AP portfolio. Subtract them from the screener result.
+        let pqp_positions_tickers = FastRunner::get_pqp_positions_tickers().await;
+        let pqp_positions_ticker_set = pqp_positions_tickers.into_iter().collect::<HashSet<_>>();
+        let sa_screener_buy_tickers = sa_screener_tickers_top_half.into_iter().filter(|ticker| !pqp_positions_ticker_set.contains(ticker)).collect::<Vec<_>>();
+
+        (sa_screener_buy_tickers, Vec::new())
     }
 
     // This Analysis finishes faster than the main Portfolio History download. PortfHistory: 400KB (first: 3800ms), Analysis: 85KB (first: 1200ms).

@@ -71,13 +71,16 @@ impl RqTask for FastRunnerPqpTask {
             let now_et = Utc::now().with_timezone(&tz_et);
             let target_naive = now_et.date_naive().and_time(NaiveTime::from_hms_opt(12, 0, 0).unwrap());
             let target_et = tz_et.from_local_datetime(&target_naive).earliest().unwrap();
-            let is_live_trading_based_on_closeto_noon = (now_et - target_et).num_seconds().abs() < 90; // If current time from 12:00 ET is less than 90 seconds, then set it to true.
+            let num_seconds_to_noon = (now_et - target_et).num_seconds().abs();
+            let mut is_first_scheduled_today = num_seconds_to_noon > 2 * 60 * 60; // If current time from 12:00 ET is more than 2 hours. (at 9:45 ET)
+            let is_last_scheduled_today = num_seconds_to_noon < 90; // If current time from 12:00 ET is less than 90 seconds, then set it to true.
 
-            fast_runner.is_simulation = !is_live_trading_based_on_closeto_noon;
+            fast_runner.is_simulation = !is_last_scheduled_today; // live trading is only if it is the last scheduled time (11:59 ET)
 
             if self.is_manual_user_forcerun {
                 fast_runner.pqp_is_run_today = true;
                 fast_runner.is_simulation = true; // whatever is the calculation, force simulation in this mode.
+                is_first_scheduled_today = true;
             }
 
             if !fast_runner.pqp_is_run_today {
@@ -86,6 +89,26 @@ impl RqTask for FastRunnerPqpTask {
             }
 
             writeln!(fast_runner.user_log, "{}: FastRunnerPqpTask run() loop started. Json target date: {}, is_simulation: {}", Utc::now().format("%H:%M:%S"), fast_runner.pqp_json_target_date_str, fast_runner.is_simulation).unwrap(); // write!() macro never panics for a String (infallible), so unwrap() is safe
+
+            if is_first_scheduled_today {
+                if let Some(email_to_address) = get_rqcore_config().get("email_gyant") {
+                    let pqp_screener_tickers = FastRunner::get_sa_screener_result_tickers(r#"{"filter":{"quant_rating":{"in":["strong_buy"]},"quant_rating_days":{"in":[{"gte":25}]}},"page":1,"per_page":200,"sort":null,"total_count":true,"type":"stock"}"#).await;
+                    println!("SA PQP Screener Tickers (#{:?}): {:?}", pqp_screener_tickers.len(), pqp_screener_tickers);
+
+                    let pqp_position_tickers = FastRunner::get_pqp_positions_tickers().await;
+                    println!("SA PQP Position Tickers (#{:?}): {:?}", pqp_position_tickers.len(), pqp_position_tickers);
+
+                    let candidate_tickers = FastRunner::get_sa_candidate_tickers().await;
+                    println!("SA PQP CandidateTickers (#{:?}, #{:?}): {:?}", candidate_tickers.0.len(), candidate_tickers.1.len(), candidate_tickers);
+
+                    let candidate_tickers_email_body = format!("SA PQP Screener Tickers (#{:?}): {:?}\n\nSA PQP Position Tickers (#{:?}): {:?}\n\nSA PQP CandidateTickers (#{:?}, #{:?}): {:?}",
+                        pqp_screener_tickers.len(), pqp_screener_tickers, pqp_position_tickers.len(), pqp_position_tickers, candidate_tickers.0.len(), candidate_tickers.1.len(), candidate_tickers);
+
+                    if let Err(err) = RqEmail::send_text(email_to_address, "RqCore: SA PQP/AP Candidate Tickers", candidate_tickers_email_body.as_str()).await {
+                        log_and_println!("RqEmail::send_text() failed: {}", err);
+                    }
+                }
+            }
 
             { // keep the mutex lock scope as small as possible
                 let mut mark_value_cache = RQ_MARK_VALUE_CACHE.lock_ignore_poison();

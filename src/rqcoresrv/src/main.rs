@@ -25,7 +25,7 @@ mod main_web; // refers main_web.rs as a module
 
 use crate::{
     main_web::actix_websrv_run,
-    robotrader::{fast_runner_task::{FastRunnerApTask, FastRunnerPqpTask}, robotrader::RQ_ROBO_TRADER},
+    robotrader::{fast_runner::FastRunner, fast_runner_task::{FastRunnerApTask, FastRunnerPqpTask}, robotrader::RQ_ROBO_TRADER},
     services::rqtask_scheduler::{HeartbeatTask, RQ_TASK_SCHEDULER, RqTask}
 };
 
@@ -210,6 +210,15 @@ async fn console_menu_loop(server_handle: ServerHandle, runtime_info: Arc<Runtim
             }
             "2" => {
                 print_runtime_info(&runtime_info);
+
+                let pqp_screener_tickers = FastRunner::get_sa_screener_result_tickers(r#"{"filter":{"quant_rating":{"in":["strong_buy"]},"quant_rating_days":{"in":[{"gte":25}]}},"page":1,"per_page":200,"sort":null,"total_count":true,"type":"stock"}"#).await;
+                println!("SA PQP Screener Tickers (#{:?}): {:?}", pqp_screener_tickers.len(), pqp_screener_tickers);
+
+                let pqp_position_tickers = FastRunner::get_pqp_positions_tickers().await;
+                println!("SA PQP Position Tickers (#{:?}): {:?}", pqp_position_tickers.len(), pqp_position_tickers);
+
+                let candidate_tickers = FastRunner::get_sa_candidate_tickers().await;
+                println!("SA PQP CandidateTickers (#{:?}, #{:?}): {:?}", candidate_tickers.0.len(), candidate_tickers.1.len(), candidate_tickers);
             },
             "3" => {
                 RQ_TASK_SCHEDULER.print_next_trigger_times();
